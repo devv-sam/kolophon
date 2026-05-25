@@ -10,8 +10,8 @@ export default defineConfig({
   },
   webExt: {
     binaries: {
-      // macOS example path for Arc
-      chrome: "/Applications/Arc.app/Contents/MacOS/Arc",
+      // macOS example path for Chrome
+      chrome: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     },
   },
 });
