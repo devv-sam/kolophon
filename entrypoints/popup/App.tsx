@@ -1,12 +1,13 @@
 import { useEffect } from "react";
+import { browser } from "wxt/browser";
 
 function App() {
   useEffect(() => {
-    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    browser.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
       if (tab?.id == null) return;
       // Opening this port activates inspect mode in the content script.
       // When the popup closes, the port disconnects and inspect mode turns off.
-      chrome.tabs.connect(tab.id, { name: "kolophon-inspect" });
+      browser.tabs.connect(tab.id, { name: "kolophon-inspect" });
     });
   }, []);
 

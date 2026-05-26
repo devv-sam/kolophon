@@ -4,6 +4,7 @@ export default defineContentScript({
   main() {
     let overlay: HTMLDivElement | null = null;
     let badge: HTMLDivElement | null = null;
+    let cursorStyle: HTMLStyleElement | null = null;
     let activeTarget: Element | null = null;
     let active = false;
 
@@ -97,6 +98,11 @@ export default defineContentScript({
       if (active) return;
       active = true;
       if (!overlay) mount();
+      cursorStyle = document.createElement("style");
+      cursorStyle.setAttribute("data-kolophon", "cursor");
+      cursorStyle.textContent = "* { cursor: crosshair !important; }";
+      // Append to <html> directly — works even on pages where <head> is absent or slow.
+      document.documentElement.appendChild(cursorStyle);
       document.addEventListener("mouseover", onMouseOver);
       document.addEventListener("mouseleave", hide);
       window.addEventListener("scroll", onScroll, { passive: true });
@@ -105,6 +111,8 @@ export default defineContentScript({
     function disable() {
       active = false;
       hide();
+      cursorStyle?.remove();
+      cursorStyle = null;
       document.removeEventListener("mouseover", onMouseOver);
       document.removeEventListener("mouseleave", hide);
       window.removeEventListener("scroll", onScroll);
@@ -112,7 +120,7 @@ export default defineContentScript({
 
     // Popup opens a named port on mount; port disconnects automatically
     // when the popup closes — that's our signal to turn off inspect mode.
-    chrome.runtime.onConnect.addListener((port) => {
+    browser.runtime.onConnect.addListener((port) => {
       if (port.name !== "kolophon-inspect") return;
       enable();
       port.onDisconnect.addListener(disable);
