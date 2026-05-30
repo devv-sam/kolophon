@@ -5,9 +5,12 @@ function App() {
   useEffect(() => {
     browser.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
       if (tab?.id == null) return;
-      // Opening this port activates inspect mode in the content script.
-      // When the popup closes, the port disconnects and inspect mode turns off.
+      // Open the port to activate inspect mode, then immediately close this
+      // popup window. Otherwise Chrome eats the user's first page click on
+      // popup-dismiss, and the cursor doesn't re-evaluate until the page gains
+      // focus — meaning two clicks were needed to see the first card.
       browser.tabs.connect(tab.id, { name: "kolophon-inspect" });
+      window.close();
     });
   }, []);
 
