@@ -31,6 +31,129 @@ type ColorFormat =
 
 // ─── Color math ─────────────────────────────────────────────────────────────
 
+function srgbToLinear(c: number): number {
+  const v = c / 255;
+  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+
+function rgbToHsl(rgb: string): string {
+  const m = rgb.match(/\d+/g);
+  if (!m || m.length < 3) return rgb;
+  const r = parseInt(m[0]) / 255,
+    g = parseInt(m[1]) / 255,
+    b = parseInt(m[2]) / 255;
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b);
+  let h = 0,
+    s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r:
+        h = (g - b) / d + (g < b ? 6 : 0);
+        break;
+      case g:
+        h = (b - r) / d + 2;
+        break;
+      case b:
+        h = (r - g) / d + 4;
+        break;
+    }
+    h /= 6;
+  }
+  return `hsl(${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`;
+}
+
+function rgbToHwb(rgb: string): string {
+  const m = rgb.match(/\d+/g);
+  if (!m || m.length < 3) return rgb;
+  const r = parseInt(m[0]) / 255,
+    g = parseInt(m[1]) / 255,
+    b = parseInt(m[2]) / 255;
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b);
+  let h = 0;
+  if (max !== min) {
+    const d = max - min;
+    switch (max) {
+      case r:
+        h = (g - b) / d + (g < b ? 6 : 0);
+        break;
+      case g:
+        h = (b - r) / d + 2;
+        break;
+      case b:
+        h = (r - g) / d + 4;
+        break;
+    }
+    h = Math.round(h * 60);
+  }
+  return `hwb(${h} ${Math.round(min * 100)}% ${Math.round((1 - max) * 100)}%)`;
+}
+
+// sRGB -> CIE Lab (D50). Path: sRGB -> linear -> XYZ(D65) -> XYZ(D50) -> Lab.
+function rgbToLab(r: number, g: number, b: number): [number, number, number] {
+  const rl = srgbToLinear(r),
+    gl = srgbToLinear(g),
+    bl = srgbToLinear(b);
+
+  const x = 0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl;
+  const y = 0.2126729 * rl + 0.7151522 * gl + 0.072175 * bl;
+  const z = 0.0193339 * rl + 0.119192 * gl + 0.9503041 * bl;
+
+  // Bradford chromatic adaptation D65 -> D50
+  const xd =
+    1.0479298208405488 * x + 0.022946793341019088 * y - 0.05019222954313557 * z;
+  const yd =
+    0.029627815688159344 * x + 0.990434484573249 * y - 0.01707382502938514 * z;
+  const zd =
+    -0.009243058152591783 * x +
+    0.015055144896577895 * y +
+    0.7518742899580008 * z;
+
+  const xn = 0.96422,
+    yn = 1.0,
+    zn = 0.82521; // D50 reference white
+  const f = (t: number) =>
+    t > 216 / 24389 ? Math.cbrt(t) : ((24389 / 27) * t + 16) / 116;
+  const fx = f(xd / xn),
+    fy = f(yd / yn),
+    fz = f(zd / zn);
+
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
+// sRGB -> OKLab (Björn Ottosson). Path: sRGB -> linear -> LMS -> OKLab.
+function rgbToOklab(r: number, g: number, b: number): [number, number, number] {
+  const rl = srgbToLinear(r),
+    gl = srgbToLinear(g),
+    bl = srgbToLinear(b);
+
+  const l = 0.4122214708 * rl + 0.5363325363 * gl + 0.0514459929 * bl;
+  const m = 0.2119034982 * rl + 0.6806995451 * gl + 0.1073969566 * bl;
+  const s = 0.0883024619 * rl + 0.2817188376 * gl + 0.6299787005 * bl;
+
+  const lp = Math.cbrt(l),
+    mp = Math.cbrt(m),
+    sp = Math.cbrt(s);
+
+  return [
+    0.2104542553 * lp + 0.793617785 * mp - 0.0040720468 * sp,
+    1.9779984951 * lp - 2.428592205 * mp + 0.4505937099 * sp,
+    0.0259040371 * lp + 0.7827717662 * mp - 0.808675766 * sp,
+  ];
+}
+
+// Rectangular -> polar (Lab/OKLab -> LCh/OKLCh)
+function toLch(L: number, a: number, b: number): [number, number, number] {
+  const C = Math.sqrt(a * a + b * b);
+  let h = (Math.atan2(b, a) * 180) / Math.PI;
+  if (h < 0) h += 360;
+  return [L, C, h];
+}
+
 function buildColorFormats(
   rgb: string,
   hex: string,
