@@ -19,45 +19,72 @@ interface Props {
   onClose: () => void;
 }
 
-type ColorFormat = "hex" | "rgb" | "hsl" | "hwb";
+type ColorFormat =
+  | "hex"
+  | "rgb"
+  | "hsl"
+  | "hwb"
+  | "lch"
+  | "oklch"
+  | "lab"
+  | "oklab";
 
-function rgbToHsl(rgb: string): string {
+// ─── Color math ─────────────────────────────────────────────────────────────
+
+function buildColorFormats(
+  rgb: string,
+  hex: string,
+): Record<ColorFormat, string> {
   const m = rgb.match(/\d+/g);
-  if (!m || m.length < 3) return rgb;
-  let r = parseInt(m[0]) / 255, g = parseInt(m[1]) / 255, b = parseInt(m[2]) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h = 0, s = 0;
-  const l = (max + min) / 2;
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    switch (max) {
-      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-      case g: h = (b - r) / d + 2; break;
-      case b: h = (r - g) / d + 4; break;
-    }
-    h /= 6;
+  if (!m || m.length < 3) {
+    return {
+      hex,
+      rgb,
+      hsl: rgb,
+      hwb: rgb,
+      lch: rgb,
+      oklch: rgb,
+      lab: rgb,
+      oklab: rgb,
+    };
   }
-  return `hsl(${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`;
+  const r = parseInt(m[0]),
+    g = parseInt(m[1]),
+    b = parseInt(m[2]);
+
+  const [labL, labA, labB] = rgbToLab(r, g, b);
+  const [, lchC, lchH] = toLch(labL, labA, labB);
+  const [okL, okA, okB] = rgbToOklab(r, g, b);
+  const [, okC, okH] = toLch(okL, okA, okB);
+
+  const n2 = (v: number) => (Math.round(v * 100) / 100).toString();
+  const n4 = (v: number) => (Math.round(v * 10000) / 10000).toString();
+
+  return {
+    hex,
+    rgb,
+    hsl: rgbToHsl(rgb),
+    hwb: rgbToHwb(rgb),
+    lab: `lab(${n2(labL)} ${n2(labA)} ${n2(labB)})`,
+    lch: `lch(${n2(labL)} ${n2(lchC)} ${n2(lchH)})`,
+    oklab: `oklab(${n2(okL * 100)}% ${n4(okA)} ${n4(okB)})`,
+    oklch: `oklch(${n4(okL)} ${n4(okC)} ${n2(okH)})`,
+  };
 }
 
-function rgbToHwb(rgb: string): string {
-  const m = rgb.match(/\d+/g);
-  if (!m || m.length < 3) return rgb;
-  const r = parseInt(m[0]) / 255, g = parseInt(m[1]) / 255, b = parseInt(m[2]) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h = 0;
-  if (max !== min) {
-    const d = max - min;
-    switch (max) {
-      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-      case g: h = (b - r) / d + 2; break;
-      case b: h = (r - g) / d + 4; break;
-    }
-    h = Math.round(h * 60);
-  }
-  return `hwb(${h} ${Math.round(min * 100)}% ${Math.round((1 - max) * 100)}%)`;
-}
+// Order shown in dropdown
+const FORMAT_ORDER: ColorFormat[] = [
+  "hex",
+  "rgb",
+  "hsl",
+  "hwb",
+  "lch",
+  "oklch",
+  "lab",
+  "oklab",
+];
+
+// ─── Component ──────────────────────────────────────────────────────────────
 
 export function PopupCard({ data, x, y, visible, onClose }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -68,66 +95,109 @@ export function PopupCard({ data, x, y, visible, onClose }: Props) {
   const clampedX = Math.min(x, window.innerWidth - 300);
   const clampedY = Math.min(y, window.innerHeight - 280);
 
-  const colorValues: Record<ColorFormat, string> = {
-    hex: data.colorHex,
-    rgb: data.colorRgb,
-    hsl: rgbToHsl(data.colorRgb),
-    hwb: rgbToHwb(data.colorRgb),
-  };
+  const colorValues = buildColorFormats(data.colorRgb, data.colorHex);
+
+  function handleCopy(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!data) return;
+    navigator.clipboard.writeText(data.family).catch(() => {});
+  }
 
   return (
     <div
       style={styles.card(clampedX, clampedY)}
       onClick={(e) => {
         e.stopPropagation();
-        setDropdownOpen(false); // clicking anywhere in card collapses the dropdown
+        setDropdownOpen(false);
       }}
     >
       <div style={styles.header}>
-        <span style={{ ...styles.fontName, fontFamily: `'${data.name}', sans-serif` }}>
-          {data.name}
-        </span>
+        <div style={styles.nameGroup}>
+          <span
+            style={{
+              ...styles.fontName,
+              fontFamily: `'${data.name}', sans-serif`,
+            }}
+          >
+            {data.name}
+          </span>
+          <button
+            type="button"
+            style={styles.iconBtn}
+            title="Copy family"
+            onClick={handleCopy}
+          >
+            <CopyIcon />
+          </button>
+        </div>
         <div style={styles.headerActions}>
-          <button style={styles.iconBtn} title="Expand"><ExternalLink /></button>
-          <button style={styles.iconBtn} title="Copy family"><CopyIcon /></button>
-          <button style={styles.iconBtn} onClick={onClose} title="Close"><X /></button>
+          <button style={styles.iconBtn} title="Expand">
+            <ExternalLink />
+          </button>
+          <button style={styles.iconBtn} onClick={onClose} title="Close">
+            <X />
+          </button>
         </div>
       </div>
 
       <div style={styles.specs}>
         <SpecRow label="Size" value={data.size} />
 
-        {/* Color row with format dropdown */}
-        <div style={{ ...styles.specRow, position: "relative" }}>
+        <div style={styles.specRow}>
           <span style={styles.specLabel}>Color:</span>
           <span
-            style={{ ...styles.specValue, cursor: "pointer", userSelect: "none" }}
-            onClick={(e) => { e.stopPropagation(); setDropdownOpen((o) => !o); }}
+            data-clickable
+            style={{
+              ...styles.specValue,
+              cursor: "pointer",
+              userSelect: "none",
+              position: "relative",
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setDropdownOpen((o) => !o);
+            }}
           >
             <Swatch color={data.colorRgb} />
             {colorValues[colorFormat]}
-            <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.45, lineHeight: 1 }}>▾</span>
-          </span>
+            <span
+              style={{
+                marginLeft: 5,
+                opacity: 0.45,
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <ChevronDown />
+            </span>
 
-          {dropdownOpen && (
-            <div style={styles.dropdown}>
-              {(Object.entries(colorValues) as [ColorFormat, string][]).map(([fmt, val]) => (
-                <div
-                  key={fmt}
-                  style={styles.dropdownOption(fmt === colorFormat)}
-                  onClick={(e) => { e.stopPropagation(); setColorFormat(fmt); setDropdownOpen(false); }}
-                >
-                  {val}
-                </div>
-              ))}
-            </div>
-          )}
+            {dropdownOpen && (
+              <div style={styles.dropdown} onClick={(e) => e.stopPropagation()}>
+                {FORMAT_ORDER.map((fmt) => (
+                  <div
+                    key={fmt}
+                    data-clickable
+                    style={styles.dropdownOption(fmt === colorFormat)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setColorFormat(fmt);
+                      setDropdownOpen(false);
+                    }}
+                  >
+                    {colorValues[fmt]}
+                  </div>
+                ))}
+              </div>
+            )}
+          </span>
         </div>
 
         <SpecRow label="Line Height" value={data.lineHeight} />
       </div>
 
-      <div style={{ ...styles.specimen, fontFamily: `'${data.name}', sans-serif` }}>
+      <div
+        style={{ ...styles.specimen, fontFamily: `'${data.name}', sans-serif` }}
+      >
         AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwYyZz 0123456789@?!(&)
       </div>
     </div>
@@ -145,29 +215,77 @@ function SpecRow({ label, value }: { label: string; value: string }) {
 
 function Swatch({ color }: { color: string }) {
   return (
-    <span style={{
-      display: "inline-block",
-      width: 10, height: 10,
-      background: color,
-      border: "1px solid rgba(255,255,255,0.2)",
-      marginRight: 6,
-      flexShrink: 0,
-    }} />
+    <span
+      style={{
+        display: "inline-block",
+        width: 10,
+        height: 10,
+        background: color,
+        border: "1px solid rgba(255,255,255,0.2)",
+        marginRight: 6,
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
+function ChevronDown() {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
   );
 }
 
 function CopyIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 11 11" fill="none" aria-hidden="true">
-      <path d="M4 4H10V10H4V4Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-      <path d="M1 7V1H7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 11 11"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M4 4H10V10H4V4Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M1 7V1H7"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
 function ExternalLink() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M15 3h6v6" />
       <path d="M10 14 21 3" />
       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
@@ -177,7 +295,17 @@ function ExternalLink() {
 
 function X() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M18 6 6 18" />
       <path d="m6 6 12 12" />
     </svg>
@@ -201,6 +329,7 @@ const styles = {
     color: "#fff",
     zIndex: 2147483647,
     borderRadius: 0,
+    overflow: "visible",
   }),
 
   header: {
@@ -208,6 +337,14 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 12,
+    gap: 8,
+  } as React.CSSProperties,
+
+  nameGroup: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    minWidth: 0,
   } as React.CSSProperties,
 
   fontName: {
@@ -221,6 +358,7 @@ const styles = {
     display: "flex",
     gap: 8,
     alignItems: "center",
+    flexShrink: 0,
   } as React.CSSProperties,
 
   iconBtn: {
@@ -250,7 +388,6 @@ const styles = {
 
   specLabel: {
     color: "rgba(255,255,255,0.4)",
-    minWidth: 76,
     flexShrink: 0,
   } as React.CSSProperties,
 
@@ -263,19 +400,20 @@ const styles = {
   dropdown: {
     position: "absolute",
     top: "calc(100% + 2px)",
-    left: 84, // align with value column (label minWidth + gap)
+    left: 0, // align with the value span's left edge (its containing block)
     zIndex: 1,
     background: "rgba(28, 28, 30, 0.97)",
     backdropFilter: "blur(12px)",
     WebkitBackdropFilter: "blur(12px)",
     border: "1px solid rgba(255,255,255,0.10)",
     boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
-    minWidth: 160,
+    minWidth: 200,
+    padding: "4px 0",
     borderRadius: 0,
   } as React.CSSProperties,
 
   dropdownOption: (active: boolean): React.CSSProperties => ({
-    padding: "6px 12px",
+    padding: "5px 14px",
     fontSize: 12,
     fontFamily: "ui-monospace, 'Cascadia Code', monospace",
     color: active ? "#fff" : "rgba(255,255,255,0.55)",

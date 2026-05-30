@@ -16,7 +16,12 @@ export default defineContentScript({
     let popupOpen = false;
 
     let reactRoot: Root | null = null;
-    let popupState = { data: null as FontData | null, x: 0, y: 0, visible: false };
+    let popupState = {
+      data: null as FontData | null,
+      x: 0,
+      y: 0,
+      visible: false,
+    };
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -119,7 +124,7 @@ export default defineContentScript({
           y={popupState.y}
           visible={popupState.visible}
           onClose={closePopup}
-        />
+        />,
       );
     }
 
@@ -138,7 +143,9 @@ export default defineContentScript({
         display: "block",
       });
 
-      badge.textContent = parseFontName(window.getComputedStyle(target).fontFamily);
+      badge.textContent = parseFontName(
+        window.getComputedStyle(target).fontFamily,
+      );
       badge.style.top = `${Math.min(rect.bottom + 4, window.innerHeight - 20)}px`;
       badge.style.left = `${rect.left}px`;
       badge.style.display = "block";
@@ -159,7 +166,9 @@ export default defineContentScript({
     function onMouseOver(e: MouseEvent) {
       const target = e.target as Element;
       if (!(target instanceof Element)) return;
-      if (target.hasAttribute("data-kolophon")) return;
+      // closest() walks ancestors, so we skip anything inside our popup host —
+      // not just elements that directly carry the data attribute.
+      if (target.closest("[data-kolophon]")) return;
       activeTarget = target;
       track(target);
     }
@@ -176,18 +185,17 @@ export default defineContentScript({
       popupOpen = false;
       popupState = { ...popupState, visible: false };
       syncPopup();
-      document.addEventListener("mouseover", onMouseOver);
     }
 
     function onClick(e: MouseEvent) {
-      e.preventDefault();
-      e.stopPropagation();
       const target = e.target as Element;
       if (!(target instanceof Element)) return;
-      if (target.hasAttribute("data-kolophon")) return;
+      if (target.closest("[data-kolophon]")) return;
+
+      e.preventDefault();
+      e.stopPropagation();
 
       popupOpen = true;
-      document.removeEventListener("mouseover", onMouseOver);
 
       const x = Math.min(e.clientX + 12, window.innerWidth - 300);
       const y = Math.min(e.clientY + 12, window.innerHeight - 300);
@@ -204,7 +212,15 @@ export default defineContentScript({
       if (!overlay) mount();
       cursorStyle = document.createElement("style");
       cursorStyle.setAttribute("data-kolophon", "cursor");
-      cursorStyle.textContent = "* { cursor: crosshair !important; }";
+      cursorStyle.textContent = `
+        * { cursor: crosshair !important; }
+        [data-kolophon="popup-host"],
+        [data-kolophon="popup-host"] * { cursor: default !important; }
+        [data-kolophon="popup-host"] button,
+        [data-kolophon="popup-host"] button *,
+        [data-kolophon="popup-host"] [data-clickable],
+        [data-kolophon="popup-host"] [data-clickable] * { cursor: pointer !important; }
+      `;
       document.documentElement.appendChild(cursorStyle);
       document.addEventListener("mouseover", onMouseOver);
       document.addEventListener("mouseleave", hide);
