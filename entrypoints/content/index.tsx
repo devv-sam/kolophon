@@ -51,6 +51,7 @@ export default defineContentScript({
         weight: s.fontWeight,
         size: s.fontSize,
         lineHeight: s.lineHeight,
+        letterSpacing: s.letterSpacing,
         colorRgb: s.color,
         colorHex: rgbToHex(s.color),
       };

@@ -1,18 +1,22 @@
-import type { SiteInfo } from "./content/PopupCard";
+import type { FontData, SiteInfo } from "./content/PopupCard";
+
+interface PanelState {
+  site: SiteInfo | null;
+  font: FontData | null;
+}
 
 export default defineBackground(() => {
-  // Latest site the user expanded from. The panel asks for it on load;
+  // Latest inspection the user expanded from. The panel asks for it on load;
   // if the panel is already open it hears the broadcast instead.
-  let siteInfo: SiteInfo | null = null;
+  const state: PanelState = { site: null, font: null };
 
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "kolophon:open-sidepanel") {
-      if (message.site) {
-        siteInfo = message.site;
-        browser.runtime
-          .sendMessage({ type: "kolophon:site-info", site: message.site })
-          .catch(() => {}); // no panel listening yet — fine
-      }
+      if (message.site) state.site = message.site;
+      if (message.font) state.font = message.font;
+      browser.runtime
+        .sendMessage({ type: "kolophon:state", ...state })
+        .catch(() => {}); // no panel listening yet — fine
       const tabId = sender.tab?.id;
       if (tabId === undefined) return;
       // Must be called synchronously here — an await before open() drops the
@@ -21,8 +25,8 @@ export default defineBackground(() => {
       return;
     }
 
-    if (message?.type === "kolophon:get-site-info") {
-      sendResponse(siteInfo);
+    if (message?.type === "kolophon:get-state") {
+      sendResponse(state);
     }
   });
 });

@@ -7,6 +7,7 @@ export interface FontData {
   weight: string;
   size: string;
   lineHeight: string;
+  letterSpacing: string;
   colorRgb: string;
   colorHex: string;
 }
@@ -19,7 +20,7 @@ interface Props {
   onClose: () => void;
 }
 
-type ColorFormat =
+export type ColorFormat =
   | "hex"
   | "rgb"
   | "hsl"
@@ -154,7 +155,7 @@ function toLch(L: number, a: number, b: number): [number, number, number] {
   return [L, C, h];
 }
 
-function buildColorFormats(
+export function buildColorFormats(
   rgb: string,
   hex: string,
 ): Record<ColorFormat, string> {
@@ -217,7 +218,7 @@ function readSiteInfo(): SiteInfo {
 }
 
 // Order shown in dropdown
-const FORMAT_ORDER: ColorFormat[] = [
+export const FORMAT_ORDER: ColorFormat[] = [
   "hex",
   "rgb",
   "hsl",
@@ -294,7 +295,11 @@ export function PopupCard({ data, x, y, visible, onClose }: Props) {
             onClick={(e) => {
               e.stopPropagation();
               browser.runtime
-                .sendMessage({ type: "kolophon:open-sidepanel", site: readSiteInfo() })
+                .sendMessage({
+                  type: "kolophon:open-sidepanel",
+                  site: readSiteInfo(),
+                  font: data,
+                })
                 .catch(() => {});
             }}
           >
