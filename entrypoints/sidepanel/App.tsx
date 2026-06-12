@@ -227,6 +227,37 @@ function AddToCollection({
 
 // ─── Collection ──────────────────────────────────────────────────────────────
 
+// Best-effort preview fonts: one Google Fonts request for every collected
+// family, each with the weights actually collected. Local/custom fonts fall
+// back to sans-serif, same as the spec sheet specimen.
+function useCollectionFonts(entries: CollectionEntry[]) {
+  const byFamily = new Map<string, Set<number>>();
+  for (const { font } of entries) {
+    const weights = byFamily.get(font.name) ?? new Set<number>();
+    const w = parseInt(font.weight, 10);
+    if (!Number.isNaN(w)) weights.add(w);
+    byFamily.set(font.name, weights);
+  }
+  const query = [...byFamily.entries()]
+    .map(([name, weights]) => {
+      const family = `family=${name.trim().replace(/\s+/g, "+")}`;
+      const sorted = [...weights].sort((a, b) => a - b);
+      return sorted.length ? `${family}:wght@${sorted.join(";")}` : family;
+    })
+    .join("&");
+
+  useEffect(() => {
+    const id = "kolophon-collection-fonts";
+    document.getElementById(id)?.remove();
+    if (!query) return;
+    const link = document.createElement("link");
+    link.id = id;
+    link.rel = "stylesheet";
+    link.href = `https://fonts.googleapis.com/css2?${query}&display=swap`;
+    document.head.appendChild(link);
+  }, [query]);
+}
+
 function CollectionView() {
   const [entries, setEntries] = useState<CollectionEntry[]>([]);
 
@@ -250,6 +281,23 @@ function CollectionView() {
     return () => browser.storage.onChanged.removeListener(onChanged);
   }, []);
 
+  useCollectionFonts(entries);
+
+  function remove(entry: CollectionEntry) {
+    const key = entryKey(entry.font, entry.site);
+    browser.storage.local
+      .get("collection")
+      .then(({ collection }) => {
+        const list = Array.isArray(collection)
+          ? (collection as CollectionEntry[])
+          : [];
+        return browser.storage.local.set({
+          collection: list.filter((e) => entryKey(e.font, e.site) !== key),
+        });
+      })
+      .catch(() => {});
+  }
+
   if (entries.length === 0) {
     return (
       <div className="empty">
@@ -269,28 +317,118 @@ function CollectionView() {
         .slice()
         .reverse()
         .map((entry, i) => (
-          <div className="collection-row" key={`${entry.savedAt}-${i}`}>
-            <div className="collection-main">
-              <span className="collection-name">{entry.font.name}</span>
-              <span className="collection-meta">
-                {entry.font.weight} · {entry.font.size} ·{" "}
-                {entry.site?.host ?? "unknown"}
-              </span>
-            </div>
-            <span
-              className="color-chip"
-              style={{ background: entry.font.colorRgb }}
-            />
-          </div>
+          <CollectionItem
+            key={`${entry.savedAt}-${i}`}
+            entry={entry}
+            onRemove={() => remove(entry)}
+          />
         ))}
     </div>
   );
 }
 
-function CopyAll({ font }: { font: FontData }) {
+function CollectionItem({
+  entry,
+  onRemove,
+}: {
+  entry: CollectionEntry;
+  onRemove: () => void;
+}) {
   const [copied, copy] = useCopyFlash();
+  const { font, site } = entry;
 
-  const css = [
+  return (
+    <article className="coll-item">
+      <span className="coll-badge">{site?.host ?? "unknown"}</span>
+      <button
+        type="button"
+        className="coll-remove"
+        onClick={onRemove}
+        title="Remove from collection"
+      >
+        ×
+      </button>
+
+      <div
+        className="coll-specimen"
+        style={{
+          fontFamily: `'${font.name}', sans-serif`,
+          fontWeight: font.weight as React.CSSProperties["fontWeight"],
+          fontStyle: font.style,
+        }}
+      >
+        Aa 123
+      </div>
+
+      <div className="coll-foot">
+        <div className="coll-id">
+          <span className="coll-name">{font.name}</span>
+          <span className="coll-meta">
+            {font.weight} · {font.size} ·
+            <span className="color-chip" style={{ background: font.colorRgb }} />
+            {font.colorHex}
+          </span>
+        </div>
+        <button
+          type="button"
+          className={`copy-all coll-copy${copied ? " copied" : ""}`}
+          onClick={() => copy(fontCss(font))}
+          title="Copy properties as CSS"
+        >
+          {copied ? <CheckIcon /> : <CopyIcon />}
+          {copied ? "Copied" : "Copy CSS"}
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 11 11"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M4 4H10V10H4V4Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M1 7V1H7"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
+function fontCss(font: FontData): string {
+  return [
     `font-family: ${font.family};`,
     `font-style: ${font.style};`,
     `font-weight: ${font.weight};`,
@@ -299,12 +437,16 @@ function CopyAll({ font }: { font: FontData }) {
     `letter-spacing: ${font.letterSpacing};`,
     `color: ${font.colorHex};`,
   ].join("\n");
+}
+
+function CopyAll({ font }: { font: FontData }) {
+  const [copied, copy] = useCopyFlash();
 
   return (
     <button
       type="button"
       className={`copy-all${copied ? " copied" : ""}`}
-      onClick={() => copy(css)}
+      onClick={() => copy(fontCss(font))}
       title="Copy all properties as CSS"
     >
       {copied ? "Copied" : "Copy all"}

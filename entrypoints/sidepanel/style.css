@@ -342,27 +342,59 @@ body {
 /* ─── Collection ──────────────────────────────────────────────────────── */
 
 .collection {
-  padding: 4px 20px 32px;
+  padding: 0 20px 32px;
 }
 
-.collection-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 13px 0;
+/* Stacked specimen entries — Font Book energy, list discipline */
+.coll-item {
+  position: relative;
+  padding: 18px 0;
   border-bottom: 1px solid var(--hairline);
 }
 
-.collection-main {
+.coll-badge {
+  display: inline-block;
+  margin-bottom: 14px;
+  padding: 3px 7px;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--hairline);
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.coll-specimen {
+  font-size: 48px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.coll-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.coll-id {
   display: flex;
   flex-direction: column;
   gap: 3px;
   min-width: 0;
 }
 
-.collection-name {
-  font-size: 15px;
+.coll-name {
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
   overflow: hidden;
@@ -370,13 +402,47 @@ body {
   white-space: nowrap;
 }
 
-.collection-meta {
+.coll-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--ink-mute);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  overflow: hidden;
+}
+
+.coll-copy {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.coll-remove {
+  position: absolute;
+  top: 16px;
+  right: 0;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--ink-mute);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+}
+
+.coll-item:hover .coll-remove {
+  opacity: 1;
+}
+
+.coll-remove:hover {
+  color: var(--ink);
 }
 
 /* ─── Empty state ─────────────────────────────────────────────────────── */
