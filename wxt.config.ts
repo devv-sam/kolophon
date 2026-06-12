@@ -6,7 +6,13 @@ export default defineConfig({
     name: "kolophon",
     description: "Inspect, load, and copy any font on any page.",
     version: "0.1.0",
-    permissions: ["activeTab", "scripting", "storage", "clipboardWrite"],
+    permissions: [
+      "activeTab",
+      "scripting",
+      "storage",
+      "clipboardWrite",
+      "sidePanel",
+    ],
   },
   webExt: {
     binaries: {

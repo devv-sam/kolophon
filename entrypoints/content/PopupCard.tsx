@@ -195,6 +195,27 @@ function buildColorFormats(
   };
 }
 
+// ─── Site info ──────────────────────────────────────────────────────────────
+// Shown in the side panel header in place of extension branding. Gathered
+// here (in the content script) so we don't need the broad "tabs" permission.
+
+export interface SiteInfo {
+  host: string;
+  favicon: string;
+}
+
+function readSiteInfo(): SiteInfo {
+  // href resolves relative paths against the page; sizes/shortcut variants
+  // all match rel~="icon"
+  const iconLink = document.querySelector<HTMLLinkElement>(
+    'link[rel~="icon" i]',
+  );
+  return {
+    host: location.hostname.replace(/^www\./, ""),
+    favicon: iconLink?.href || `${location.origin}/favicon.ico`,
+  };
+}
+
 // Order shown in dropdown
 const FORMAT_ORDER: ColorFormat[] = [
   "hex",
@@ -267,7 +288,16 @@ export function PopupCard({ data, x, y, visible, onClose }: Props) {
           </button>
         </div>
         <div style={styles.headerActions}>
-          <button style={styles.iconBtn} title="Expand">
+          <button
+            style={styles.iconBtn}
+            title="Expand"
+            onClick={(e) => {
+              e.stopPropagation();
+              browser.runtime
+                .sendMessage({ type: "kolophon:open-sidepanel", site: readSiteInfo() })
+                .catch(() => {});
+            }}
+          >
             <ExternalLink />
           </button>
           <button style={styles.iconBtn} onClick={onClose} title="Close">
