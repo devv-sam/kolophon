@@ -202,28 +202,64 @@ section .section-label {
   color: var(--copied);
 }
 
-/* ─── Color ───────────────────────────────────────────────────────────── */
+/* ─── Color row ───────────────────────────────────────────────────────── */
 
-.color-hero {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--hairline);
+.color-row {
+  position: relative;
 }
 
-.color-swatch {
-  width: 36px;
-  height: 36px;
+.color-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-chip {
+  width: 12px;
+  height: 12px;
   flex-shrink: 0;
   border: 1px solid rgba(255, 255, 255, 0.15);
   box-sizing: border-box;
 }
 
-.color-hex {
+/* Opens upward — the color row sits at the bottom of the sheet, so dropping
+   down would clip against the panel edge. Flush with the row — a gap would
+   fire mouseleave mid-travel and close it. */
+.color-dropdown {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  z-index: 2;
+  min-width: 200px;
+  padding: 4px 0;
+  background: rgb(28, 28, 30);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.color-option {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  background: none;
+  border: none;
   font-family: var(--mono);
-  font-size: 16px;
-  letter-spacing: 0.02em;
+  font-size: 12px;
+  color: var(--ink-dim);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.color-option:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.color-option.active {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
 }
 
 /* ─── Empty state ─────────────────────────────────────────────────────── */

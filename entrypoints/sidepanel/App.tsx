@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   buildColorFormats,
   FORMAT_ORDER,
+  type ColorFormat,
   type FontData,
   type SiteInfo,
 } from "../content/PopupCard";
@@ -63,7 +64,6 @@ export default function App() {
 
 function SpecSheet({ font }: { font: FontData }) {
   const specimenFamily = `'${font.name}', sans-serif`;
-  const colors = buildColorFormats(font.colorRgb, font.colorHex);
 
   return (
     <div className="sheet" key={font.name + font.size + font.colorHex}>
@@ -94,38 +94,18 @@ function SpecSheet({ font }: { font: FontData }) {
         <SpecRow label="Size" value={font.size} />
         <SpecRow label="Line height" value={font.lineHeight} />
         <SpecRow label="Letter spacing" value={font.letterSpacing} />
-      </section>
-
-      <section className="reveal" style={{ animationDelay: "180ms" }}>
-        <span className="section-label">Color</span>
-        <div className="color-hero">
-          <span className="color-swatch" style={{ background: font.colorRgb }} />
-          <span className="color-hex">{colors.hex}</span>
-        </div>
-        {FORMAT_ORDER.map((fmt) => (
-          <SpecRow key={fmt} label={fmt} value={colors[fmt]} copyable />
-        ))}
+        <ColorRow font={font} />
       </section>
     </div>
   );
 }
 
-// Every value copies on click; copyable just adds the affordance styling
-// for rows where copying is the point (color formats).
-function SpecRow({
-  label,
-  value,
-  copyable = false,
-}: {
-  label: string;
-  value: string;
-  copyable?: boolean;
-}) {
+function useCopyFlash(): [boolean, (value: string) => void] {
   const [copied, setCopied] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
-  function copy() {
+  function copy(value: string) {
     navigator.clipboard
       .writeText(value)
       .then(() => {
@@ -136,17 +116,68 @@ function SpecRow({
       .catch(() => {});
   }
 
+  return [copied, copy];
+}
+
+// Every value copies on click.
+function SpecRow({ label, value }: { label: string; value: string }) {
+  const [copied, copy] = useCopyFlash();
+
   return (
     <button
       type="button"
       className={`spec-row${copied ? " copied" : ""}`}
-      onClick={copy}
+      onClick={() => copy(value)}
       title="Copy value"
     >
       <span className="spec-label">{label}</span>
       <span className="spec-value">{copied ? "copied" : value}</span>
-      {copyable && <span className="spec-copy-hint" aria-hidden="true" />}
     </button>
+  );
+}
+
+// Color row: hover reveals the format variants (same gesture as the popup
+// card's dropdown); clicking one copies it and makes it the displayed format.
+function ColorRow({ font }: { font: FontData }) {
+  const colors = buildColorFormats(font.colorRgb, font.colorHex);
+  const [format, setFormat] = useState<ColorFormat>("hex");
+  const [open, setOpen] = useState(false);
+  const [copied, copy] = useCopyFlash();
+
+  return (
+    <div
+      className={`spec-row color-row${copied ? " copied" : ""}`}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onClick={() => copy(colors[format])}
+      title="Copy value"
+    >
+      <span className="spec-label">Color</span>
+      <span className="spec-value color-value">
+        <span className="color-chip" style={{ background: font.colorRgb }} />
+        {copied ? "copied" : colors[format]}
+      </span>
+
+      {open && (
+        <div className="color-dropdown">
+          {FORMAT_ORDER.map((fmt) => (
+            <button
+              key={fmt}
+              type="button"
+              className={`color-option${fmt === format ? " active" : ""}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setFormat(fmt);
+                copy(colors[fmt]);
+                setOpen(false);
+              }}
+            >
+              {colors[fmt]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
