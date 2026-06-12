@@ -38,6 +38,45 @@ body {
   scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 }
 
+/* ─── Tabs ────────────────────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: 20px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 2;
+}
+
+.tab {
+  background: none;
+  border: none;
+  padding: 13px 0 11px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink-mute);
+  cursor: pointer;
+  /* Active indicator sits on top of the nav's hairline */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s ease;
+}
+
+.tab:hover {
+  color: var(--ink-dim);
+}
+
+.tab.active {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
 /* ─── Site header ─────────────────────────────────────────────────────── */
 
 .site-header {
@@ -47,10 +86,6 @@ body {
   padding: 14px 20px;
   border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
-  position: sticky;
-  top: 0;
-  background: var(--bg);
-  z-index: 1;
 }
 
 .site-favicon {
@@ -75,6 +110,29 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.add-collection {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.add-collection:not(:disabled):hover {
+  color: var(--ink);
+}
+
+/* Already collected — settled state, not an action */
+.add-collection:disabled {
+  cursor: default;
 }
 
 /* ─── Sheet ───────────────────────────────────────────────────────────── */
@@ -152,13 +210,32 @@ body {
 
 /* ─── Spec rows ───────────────────────────────────────────────────────── */
 
-section .section-label {
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   padding: 22px 0 6px;
-  border-top: 1px solid var(--hairline);
 }
 
-.hero + .specimen + section .section-label {
-  border-top: none;
+.copy-all {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-mute);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.copy-all:hover {
+  color: var(--ink);
+}
+
+.copy-all.copied {
+  color: var(--copied);
 }
 
 .spec-row {
@@ -260,6 +337,46 @@ section .section-label {
 .color-option.active {
   background: rgba(255, 255, 255, 0.06);
   color: var(--ink);
+}
+
+/* ─── Collection ──────────────────────────────────────────────────────── */
+
+.collection {
+  padding: 4px 20px 32px;
+}
+
+.collection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.collection-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.collection-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collection-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ─── Empty state ─────────────────────────────────────────────────────── */

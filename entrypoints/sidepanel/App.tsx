@@ -27,8 +27,15 @@ function useGoogleFont(name: string | undefined) {
   }, [name]);
 }
 
+interface CollectionEntry {
+  font: FontData;
+  site: SiteInfo | null;
+  savedAt: number;
+}
+
 export default function App() {
   const [state, setState] = useState<PanelState>({ site: null, font: null });
+  const [tab, setTab] = useState<"inspect" | "collection">("inspect");
 
   useEffect(() => {
     browser.runtime
@@ -49,13 +56,39 @@ export default function App() {
 
   return (
     <div className="panel">
-      {state.site && (
-        <header className="site-header">
-          <SiteFavicon src={state.site.favicon} />
-          <span className="site-host">{state.site.host}</span>
-        </header>
+      <nav className="tabs">
+        <button
+          type="button"
+          className={`tab${tab === "inspect" ? " active" : ""}`}
+          onClick={() => setTab("inspect")}
+        >
+          Inspect
+        </button>
+        <button
+          type="button"
+          className={`tab${tab === "collection" ? " active" : ""}`}
+          onClick={() => setTab("collection")}
+        >
+          Collection
+        </button>
+      </nav>
+
+      {tab === "inspect" ? (
+        <>
+          {state.site && (
+            <header className="site-header">
+              <SiteFavicon src={state.site.favicon} />
+              <span className="site-host">{state.site.host}</span>
+              {state.font && (
+                <AddToCollection font={state.font} site={state.site} />
+              )}
+            </header>
+          )}
+          {state.font ? <SpecSheet font={state.font} /> : <EmptyState />}
+        </>
+      ) : (
+        <CollectionView />
       )}
-      {state.font ? <SpecSheet font={state.font} /> : <EmptyState />}
     </div>
   );
 }
@@ -87,7 +120,10 @@ function SpecSheet({ font }: { font: FontData }) {
       </section>
 
       <section className="reveal" style={{ animationDelay: "120ms" }}>
-        <span className="section-label">Properties</span>
+        <div className="section-head">
+          <span className="section-label">Properties</span>
+          <CopyAll font={font} />
+        </div>
         <SpecRow label="Family" value={font.family} />
         <SpecRow label="Style" value={font.style} />
         <SpecRow label="Weight" value={font.weight} />
@@ -97,6 +133,182 @@ function SpecSheet({ font }: { font: FontData }) {
         <ColorRow font={font} />
       </section>
     </div>
+  );
+}
+
+// ─── Actions ─────────────────────────────────────────────────────────────────
+
+// Same exact spec from the same site = same entry. The same family at a
+// different size/weight/color is intentionally a separate collectable.
+function entryKey(font: FontData, site: SiteInfo | null): string {
+  return [
+    font.family,
+    font.style,
+    font.weight,
+    font.size,
+    font.lineHeight,
+    font.letterSpacing,
+    font.colorHex,
+    site?.host ?? "",
+  ].join("|");
+}
+
+// "Added" is derived from storage, not component state, so it survives
+// tab switches and panel reloads, and blocks duplicate adds.
+function AddToCollection({
+  font,
+  site,
+}: {
+  font: FontData;
+  site: SiteInfo | null;
+}) {
+  const [added, setAdded] = useState(false);
+  const key = entryKey(font, site);
+
+  useEffect(() => {
+    let stale = false;
+    const check = (entries: unknown) => {
+      const list = Array.isArray(entries) ? (entries as CollectionEntry[]) : [];
+      if (!stale) setAdded(list.some((e) => entryKey(e.font, e.site) === key));
+    };
+
+    browser.storage.local
+      .get("collection")
+      .then(({ collection }) => check(collection))
+      .catch(() => {});
+
+    const onChanged = (
+      changes: Record<string, { newValue?: unknown }>,
+      area: string,
+    ) => {
+      if (area === "local" && changes.collection) {
+        check(changes.collection.newValue);
+      }
+    };
+    browser.storage.onChanged.addListener(onChanged);
+    return () => {
+      stale = true;
+      browser.storage.onChanged.removeListener(onChanged);
+    };
+  }, [key]);
+
+  function save() {
+    if (added) return;
+    browser.storage.local
+      .get("collection")
+      .then(({ collection }) => {
+        const entries = Array.isArray(collection) ? collection : [];
+        // Re-check inside the write in case another panel added it meanwhile
+        if (
+          entries.some(
+            (e: CollectionEntry) => entryKey(e.font, e.site) === key,
+          )
+        ) {
+          return;
+        }
+        entries.push({ font, site, savedAt: Date.now() });
+        return browser.storage.local.set({ collection: entries });
+      })
+      .catch(() => {});
+    // Button state flips via the storage.onChanged listener above
+  }
+
+  return (
+    <button
+      type="button"
+      className="add-collection"
+      onClick={save}
+      disabled={added}
+    >
+      {added ? "✓ Added to collection" : "+ Add to collection"}
+    </button>
+  );
+}
+
+// ─── Collection ──────────────────────────────────────────────────────────────
+
+function CollectionView() {
+  const [entries, setEntries] = useState<CollectionEntry[]>([]);
+
+  useEffect(() => {
+    browser.storage.local
+      .get("collection")
+      .then(({ collection }) => {
+        if (Array.isArray(collection)) setEntries(collection);
+      })
+      .catch(() => {});
+
+    const onChanged = (
+      changes: Record<string, { newValue?: unknown }>,
+      area: string,
+    ) => {
+      if (area !== "local" || !changes.collection) return;
+      const next = changes.collection.newValue;
+      setEntries(Array.isArray(next) ? next : []);
+    };
+    browser.storage.onChanged.addListener(onChanged);
+    return () => browser.storage.onChanged.removeListener(onChanged);
+  }, []);
+
+  if (entries.length === 0) {
+    return (
+      <div className="empty">
+        <span className="empty-glyph">+</span>
+        <p className="empty-text">
+          Nothing collected yet.
+          <br />
+          Inspect a font and hit “+ Add to collection”.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="collection">
+      {entries
+        .slice()
+        .reverse()
+        .map((entry, i) => (
+          <div className="collection-row" key={`${entry.savedAt}-${i}`}>
+            <div className="collection-main">
+              <span className="collection-name">{entry.font.name}</span>
+              <span className="collection-meta">
+                {entry.font.weight} · {entry.font.size} ·{" "}
+                {entry.site?.host ?? "unknown"}
+              </span>
+            </div>
+            <span
+              className="color-chip"
+              style={{ background: entry.font.colorRgb }}
+            />
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function CopyAll({ font }: { font: FontData }) {
+  const [copied, copy] = useCopyFlash();
+
+  const css = [
+    `font-family: ${font.family};`,
+    `font-style: ${font.style};`,
+    `font-weight: ${font.weight};`,
+    `font-size: ${font.size};`,
+    `line-height: ${font.lineHeight};`,
+    `letter-spacing: ${font.letterSpacing};`,
+    `color: ${font.colorHex};`,
+  ].join("\n");
+
+  return (
+    <button
+      type="button"
+      className={`copy-all${copied ? " copied" : ""}`}
+      onClick={() => copy(css)}
+      title="Copy all properties as CSS"
+    >
+      {copied ? "Copied" : "Copy all"}
+    </button>
   );
 }
 
