@@ -10,6 +10,7 @@ export default defineContentScript({
 
     let overlay: HTMLDivElement | null = null;
     let badge: HTMLDivElement | null = null;
+    let exitButton: HTMLButtonElement | null = null;
     let cursorStyle: HTMLStyleElement | null = null;
     let activeTarget: Element | null = null;
     let active = false;
@@ -88,6 +89,36 @@ export default defineContentScript({
         letterSpacing: "0.02em",
         padding: "4px 8px",
         display: "none",
+      });
+      return el;
+    }
+
+    function buildExitButton(): HTMLButtonElement {
+      const el = document.createElement("button");
+      el.setAttribute("data-kolophon", "exit");
+      el.textContent = "Exit Kolophon";
+      Object.assign(el.style, {
+        position: "fixed",
+        top: "16px",
+        right: "16px",
+        zIndex: "2147483646",
+        background: "rgba(20, 20, 22, 0.55)",
+        backdropFilter: "blur(16px) saturate(1.4)",
+        WebkitBackdropFilter: "blur(16px) saturate(1.4)",
+        border: "1px solid rgba(255,255,255,0.10)",
+        color: "#ffffff",
+        borderRadius: "5px",
+        padding: "10px 16px",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        fontSize: "14px",
+        fontWeight: "500",
+        lineHeight: "1",
+        letterSpacing: "0.01em",
+        cursor: "pointer",
+      });
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        disable();
       });
       return el;
     }
@@ -220,8 +251,11 @@ export default defineContentScript({
         [data-kolophon="popup-host"] button *,
         [data-kolophon="popup-host"] [data-clickable],
         [data-kolophon="popup-host"] [data-clickable] * { cursor: pointer !important; }
+        [data-kolophon="exit"] { cursor: pointer !important; }
       `;
       document.documentElement.appendChild(cursorStyle);
+      exitButton = buildExitButton();
+      document.body.appendChild(exitButton);
       document.addEventListener("mouseover", onMouseOver);
       document.addEventListener("mouseleave", hide);
       document.addEventListener("click", onClick);
@@ -235,6 +269,8 @@ export default defineContentScript({
       hide();
       cursorStyle?.remove();
       cursorStyle = null;
+      exitButton?.remove();
+      exitButton = null;
       document.removeEventListener("mouseover", onMouseOver);
       document.removeEventListener("click", onClick);
       document.removeEventListener("mouseleave", hide);
