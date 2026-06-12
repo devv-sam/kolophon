@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 export interface FontData {
   name: string;
@@ -212,6 +212,10 @@ const FORMAT_ORDER: ColorFormat[] = [
 export function PopupCard({ data, x, y, visible, onClose }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [colorFormat, setColorFormat] = useState<ColorFormat>("hex");
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
 
   if (!visible || !data) return null;
 
@@ -223,7 +227,14 @@ export function PopupCard({ data, x, y, visible, onClose }: Props) {
   function handleCopy(e: React.MouseEvent) {
     e.stopPropagation();
     if (!data) return;
-    navigator.clipboard.writeText(data.family).catch(() => {});
+    navigator.clipboard
+      .writeText(data.family)
+      .then(() => {
+        setCopied(true);
+        window.clearTimeout(copiedTimer.current);
+        copiedTimer.current = window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
   }
 
   return (
@@ -246,11 +257,13 @@ export function PopupCard({ data, x, y, visible, onClose }: Props) {
           </span>
           <button
             type="button"
-            style={styles.iconBtn}
-            title="Copy family"
+            style={
+              copied ? { ...styles.iconBtn, color: "#4ade80" } : styles.iconBtn
+            }
+            title={copied ? "Copied!" : "Copy family"}
             onClick={handleCopy}
           >
-            <CopyIcon />
+            {copied ? <CheckIcon /> : <CopyIcon />}
           </button>
         </div>
         <div style={styles.headerActions}>
@@ -276,10 +289,8 @@ export function PopupCard({ data, x, y, visible, onClose }: Props) {
               userSelect: "none",
               position: "relative",
             }}
-            onClick={(e) => {
-              e.stopPropagation();
-              setDropdownOpen((o) => !o);
-            }}
+            onMouseEnter={() => setDropdownOpen(true)}
+            onMouseLeave={() => setDropdownOpen(false)}
           >
             <Swatch color={data.colorRgb} />
             {colorValues[colorFormat]}
@@ -392,6 +403,24 @@ function CopyIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20 6 9 17l-5-5" />
     </svg>
   );
 }
@@ -522,7 +551,9 @@ const styles = {
 
   dropdown: {
     position: "absolute",
-    top: "calc(100% + 2px)",
+    // Flush with the trigger — any gap would fire mouseleave mid-travel
+    // and close the hover dropdown before the pointer reaches it.
+    top: "100%",
     left: 0, // align with the value span's left edge (its containing block)
     zIndex: 1,
     background: "rgba(28, 28, 30, 0.97)",
