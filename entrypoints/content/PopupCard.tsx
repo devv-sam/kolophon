@@ -12,8 +12,26 @@ export interface FontData {
   colorHex: string;
 }
 
+// A single editable CSS property, derived from the inspected element. Only
+// properties actually set on the element are emitted (see buildEditFields),
+// so the edit view is contextual to what's really on the page.
+export type EditFieldKind = "length" | "number" | "color" | "select";
+
+export interface EditField {
+  prop: string; // css property name, e.g. "font-size"
+  label: string; // human label, e.g. "Size"
+  kind: EditFieldKind;
+  value: string; // current value: number string, hex, or option
+  unit?: string; // for "length", e.g. "px"
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[]; // for "select"
+}
+
 interface Props {
   data: FontData | null;
+  editFields?: EditField[];
   x: number;
   y: number;
   visible: boolean;
@@ -232,65 +250,93 @@ export const FORMAT_ORDER: ColorFormat[] = [
 ];
 
 // ─── Edit view ──────────────────────────────────────────────────────────────
-// Live CSS controls that reuse the popup card as a second "page". Values seed
-// from the inspected element's computed styles and write back on every change.
+// Live CSS controls that reuse the popup card as a second "page". The field
+// list is contextual (built from the element); values write back on change.
 
 type View = "specs" | "edit";
 
-interface EditState {
-  fontSize: number;
-  lineHeight: number;
-  letterSpacing: number;
-  fontWeight: number;
-  color: string;
-}
-
-// Pull the leading number out of a computed value ("16px", "1.5"), falling
-// back when the value is non-numeric ("normal").
-function numOr(value: string, fallback: number): number {
-  const n = parseFloat(value);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function seedEdit(data: FontData): EditState {
-  const size = numOr(data.size, 16);
-  return {
-    fontSize: size,
-    // line-height computes to px; express as a ratio of size for a sane slider
-    lineHeight: Math.round((numOr(data.lineHeight, size * 1.4) / size) * 100) / 100,
-    letterSpacing: numOr(data.letterSpacing, 0),
-    fontWeight: numOr(data.weight, 400),
-    color: /^#[0-9a-f]{6}$/i.test(data.colorHex) ? data.colorHex : "#ffffff",
-  };
-}
-
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export function PopupCard({ data, x, y, visible, onClose, onStyleChange }: Props) {
+export function PopupCard({
+  data,
+  editFields = [],
+  x,
+  y,
+  visible,
+  onClose,
+  onStyleChange,
+}: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [colorFormat, setColorFormat] = useState<ColorFormat>("hex");
   const [copied, setCopied] = useState(false);
   const [view, setView] = useState<View>("specs");
-  const [edit, setEdit] = useState<EditState | null>(null);
+  // Live values keyed by css property, seeded from the contextual field list.
+  const [values, setValues] = useState<Record<string, string>>({});
+  // Drag offset from the spawn position; null until the user moves the card.
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragOrigin = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
   const copiedTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
 
-  // New element clicked → reset to the spec page and reseed the edit controls.
+  // New element clicked → reset to the spec page, reseed controls, drop drag.
   useEffect(() => {
     setView("specs");
-    setEdit(data ? seedEdit(data) : null);
+    setValues(Object.fromEntries(editFields.map((f) => [f.prop, f.value])));
+    setDrag(null);
+    // editFields is rebuilt per click alongside data; data is the stable trigger
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
+
+  // While dragging, follow the pointer on window-level listeners so the card
+  // keeps moving even if the cursor outruns it.
+  useEffect(() => {
+    if (!dragging) return;
+    // Flag the document so the grabbing cursor wins over the crosshair override.
+    document.documentElement.setAttribute("data-kolophon-dragging", "");
+    function onMove(e: MouseEvent) {
+      const o = dragOrigin.current;
+      if (!o) return;
+      setDrag({ x: o.ox + (e.clientX - o.mx), y: o.oy + (e.clientY - o.my) });
+    }
+    function onUp() {
+      setDragging(false);
+      dragOrigin.current = null;
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      document.documentElement.removeAttribute("data-kolophon-dragging");
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [dragging]);
 
   if (!visible || !data) return null;
 
   const clampedX = Math.min(x, window.innerWidth - 300);
   const clampedY = Math.min(y, window.innerHeight - 280);
+  const posX = drag ? drag.x : clampedX;
+  const posY = drag ? drag.y : clampedY;
+
+  // Start a drag from the header, ignoring presses on its buttons.
+  function onHeaderMouseDown(e: React.MouseEvent) {
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragOrigin.current = { mx: e.clientX, my: e.clientY, ox: posX, oy: posY };
+    setDragging(true);
+  }
 
   const colorValues = buildColorFormats(data.colorRgb, data.colorHex);
 
-  function patchEdit(patch: Partial<EditState>) {
-    setEdit((prev) => (prev ? { ...prev, ...patch } : prev));
+  // Update local display value and live-apply the css to the element.
+  function applyField(field: EditField, raw: string) {
+    setValues((prev) => ({ ...prev, [field.prop]: raw }));
+    const css =
+      field.kind === "length" ? `${raw}${field.unit ?? "px"}` : raw;
+    onStyleChange?.(field.prop, css);
   }
 
   function handleCopy(e: React.MouseEvent) {
@@ -308,14 +354,18 @@ export function PopupCard({ data, x, y, visible, onClose, onStyleChange }: Props
 
   return (
     <div
-      style={styles.card(clampedX, clampedY)}
+      style={styles.card(posX, posY)}
       onClick={(e) => {
         e.stopPropagation();
         setDropdownOpen(false);
       }}
     >
       {view === "edit" ? (
-        <div style={styles.header}>
+        <div
+          style={styles.header}
+          data-drag
+          onMouseDown={onHeaderMouseDown}
+        >
           <div style={styles.nameGroup}>
             <button
               style={styles.iconBtn}
@@ -336,7 +386,11 @@ export function PopupCard({ data, x, y, visible, onClose, onStyleChange }: Props
           </div>
         </div>
       ) : (
-        <div style={styles.header}>
+        <div
+          style={styles.header}
+          data-drag
+          onMouseDown={onHeaderMouseDown}
+        >
           <div style={styles.nameGroup}>
             <span
               style={{
@@ -393,15 +447,11 @@ export function PopupCard({ data, x, y, visible, onClose, onStyleChange }: Props
         </div>
       )}
 
-      {view === "edit" && edit ? (
+      {view === "edit" ? (
         <EditPanel
-          edit={edit}
-          onChange={(patch, css) => {
-            patchEdit(patch);
-            for (const [prop, value] of Object.entries(css)) {
-              onStyleChange?.(prop, value);
-            }
-          }}
+          fields={editFields}
+          values={values}
+          onChange={applyField}
         />
       ) : (
         <>
@@ -470,119 +520,139 @@ export function PopupCard({ data, x, y, visible, onClose, onStyleChange }: Props
 }
 
 // ─── Edit panel ─────────────────────────────────────────────────────────────
+// Renders the contextual field list. Scrolls within a fixed height so a heavily
+// styled element doesn't blow out the card.
 
 function EditPanel({
-  edit,
+  fields,
+  values,
   onChange,
 }: {
-  edit: EditState;
-  onChange: (patch: Partial<EditState>, css: Record<string, string>) => void;
+  fields: EditField[];
+  values: Record<string, string>;
+  onChange: (field: EditField, raw: string) => void;
 }) {
+  if (fields.length === 0) {
+    return <div style={styles.editEmpty}>No editable properties.</div>;
+  }
   return (
     <div style={styles.editBody}>
-      <SliderRow
-        label="Size"
-        value={edit.fontSize}
-        min={6}
-        max={120}
-        step={1}
-        display={`${edit.fontSize}px`}
-        onChange={(v) =>
-          onChange({ fontSize: v }, { "font-size": `${v}px` })
+      {fields.map((f) => {
+        const value = values[f.prop] ?? f.value;
+        if (f.kind === "color") {
+          return <ColorRow key={f.prop} field={f} value={value} onChange={onChange} />;
         }
-      />
-      <SliderRow
-        label="Line height"
-        value={edit.lineHeight}
-        min={0.8}
-        max={3}
-        step={0.05}
-        display={edit.lineHeight.toFixed(2)}
-        onChange={(v) =>
-          onChange({ lineHeight: v }, { "line-height": String(v) })
+        if (f.kind === "select") {
+          return <SelectRow key={f.prop} field={f} value={value} onChange={onChange} />;
         }
-      />
-      <SliderRow
-        label="Letter spacing"
-        value={edit.letterSpacing}
-        min={-5}
-        max={20}
-        step={0.1}
-        display={`${edit.letterSpacing}px`}
-        onChange={(v) =>
-          onChange(
-            { letterSpacing: v },
-            { "letter-spacing": `${v}px` },
-          )
-        }
-      />
-      <SliderRow
-        label="Weight"
-        value={edit.fontWeight}
-        min={100}
-        max={900}
-        step={100}
-        display={String(edit.fontWeight)}
-        onChange={(v) =>
-          onChange({ fontWeight: v }, { "font-weight": String(v) })
-        }
-      />
-
-      <div style={styles.editRow}>
-        <span style={styles.editLabel}>Color</span>
-        <label style={styles.colorControl} data-clickable>
-          <span style={{ ...styles.colorSwatch, background: edit.color }} />
-          <span style={styles.colorValue}>{edit.color}</span>
-          <input
-            type="color"
-            value={edit.color}
-            style={styles.colorInput}
-            data-clickable
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) =>
-              onChange({ color: e.target.value }, { color: e.target.value })
-            }
-          />
-        </label>
-      </div>
+        return <NumberRow key={f.prop} field={f} value={value} onChange={onChange} />;
+      })}
     </div>
   );
 }
 
-function SliderRow({
-  label,
+// Slider plus a manual numeric input that stay in sync.
+function NumberRow({
+  field,
   value,
-  min,
-  max,
-  step,
-  display,
   onChange,
 }: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  display: string;
-  onChange: (value: number) => void;
+  field: EditField;
+  value: string;
+  onChange: (field: EditField, raw: string) => void;
 }) {
   return (
     <div style={styles.editRow}>
       <div style={styles.editRowHead}>
-        <span style={styles.editLabel}>{label}</span>
-        <span style={styles.editValue}>{display}</span>
+        <span style={styles.editLabel}>{field.label}</span>
+        <span style={styles.numberEntry}>
+          <input
+            type="number"
+            value={value}
+            min={field.min}
+            max={field.max}
+            step={field.step}
+            data-clickable
+            style={styles.numberInput}
+            onClick={(e) => e.stopPropagation()}
+            // Blur on wheel so scrolling over the field never nudges the value.
+            onWheel={(e) => (e.target as HTMLInputElement).blur()}
+            onChange={(e) => onChange(field, e.target.value)}
+          />
+          {field.unit && <span style={styles.unit}>{field.unit}</span>}
+        </span>
       </div>
       <input
         type="range"
-        min={min}
-        max={max}
-        step={step}
+        min={field.min}
+        max={field.max}
+        step={field.step}
         value={value}
         data-clickable
         style={styles.slider}
         onClick={(e) => e.stopPropagation()}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
+        onChange={(e) => onChange(field, e.target.value)}
       />
+    </div>
+  );
+}
+
+function SelectRow({
+  field,
+  value,
+  onChange,
+}: {
+  field: EditField;
+  value: string;
+  onChange: (field: EditField, raw: string) => void;
+}) {
+  const options = field.options ?? [];
+  // Keep the current computed value selectable even if it's outside our list.
+  const all = options.includes(value) ? options : [value, ...options];
+  return (
+    <div style={styles.editRowInline}>
+      <span style={styles.editLabel}>{field.label}</span>
+      <select
+        value={value}
+        data-clickable
+        style={styles.select}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => onChange(field, e.target.value)}
+      >
+        {all.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function ColorRow({
+  field,
+  value,
+  onChange,
+}: {
+  field: EditField;
+  value: string;
+  onChange: (field: EditField, raw: string) => void;
+}) {
+  return (
+    <div style={styles.editRowInline}>
+      <span style={styles.editLabel}>{field.label}</span>
+      <label style={styles.colorControl} data-clickable>
+        <span style={{ ...styles.colorSwatch, background: value }} />
+        <span style={styles.colorValue}>{value}</span>
+        <input
+          type="color"
+          value={value}
+          style={styles.colorInput}
+          data-clickable
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onChange(field, e.target.value)}
+        />
+      </label>
     </div>
   );
 }
@@ -885,6 +955,19 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     gap: 14,
+    // Cap height so a heavily-styled element scrolls instead of growing the
+    // card past the viewport. Negative margin + padding keeps the scrollbar
+    // off the content while preserving the card's edge padding.
+    maxHeight: "min(48vh, 360px)",
+    overflowY: "auto",
+    margin: "0 -4px",
+    padding: "1px 4px",
+  } as React.CSSProperties,
+
+  editEmpty: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.4)",
+    padding: "4px 0",
   } as React.CSSProperties,
 
   editRow: {
@@ -893,10 +976,17 @@ const styles = {
     gap: 7,
   } as React.CSSProperties,
 
+  editRowInline: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+  } as React.CSSProperties,
+
   editRowHead: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "baseline",
+    alignItems: "center",
   } as React.CSSProperties,
 
   editLabel: {
@@ -904,10 +994,40 @@ const styles = {
     color: "rgba(255,255,255,0.4)",
   } as React.CSSProperties,
 
-  editValue: {
+  numberEntry: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: 3,
+  } as React.CSSProperties,
+
+  numberInput: {
+    // Reads as plain text; the injected stylesheet strips spinners and adds a
+    // borderless focus fill so clicking in never shifts the layout.
+    width: 52,
+    background: "transparent",
+    border: "none",
+    outline: "none",
+    color: "#fff",
     fontSize: 12,
     fontFamily: "ui-monospace, 'Cascadia Code', monospace",
+    textAlign: "right",
+    padding: "2px 4px",
+    borderRadius: 3,
+  } as React.CSSProperties,
+
+  unit: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.4)",
+  } as React.CSSProperties,
+
+  select: {
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.10)",
     color: "#fff",
+    fontSize: 12,
+    fontFamily: "ui-monospace, 'Cascadia Code', monospace",
+    padding: "3px 6px",
+    cursor: "pointer",
   } as React.CSSProperties,
 
   slider: {

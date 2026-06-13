@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { PopupCard, type FontData } from "./PopupCard";
+import { PopupCard, type FontData, type EditField } from "./PopupCard";
 
 export default defineContentScript({
   matches: ["<all_urls>"],
@@ -22,6 +22,7 @@ export default defineContentScript({
     let popupTarget: Element | null = null;
     let popupState = {
       data: null as FontData | null,
+      editFields: [] as EditField[],
       x: 0,
       y: 0,
       visible: false,
@@ -43,6 +44,180 @@ export default defineContentScript({
           .map((n) => parseInt(n).toString(16).padStart(2, "0"))
           .join("")
       );
+    }
+
+    // ─── Contextual edit fields ───────────────────────────────────────────────
+    // The edit view only shows properties that are actually meaningful on the
+    // clicked element: typography is always relevant for a font tool, the rest
+    // appear only when set (a flex container gets gap/align, a card gets radius,
+    // etc.). Mirrors how the element is really styled rather than a fixed form.
+
+    function px(v: string): number {
+      const n = parseFloat(v);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function round(v: number, d = 0): number {
+      const f = 10 ** d;
+      return Math.round(v * f) / f;
+    }
+
+    function isTransparent(c: string): boolean {
+      if (!c || c === "transparent") return true;
+      const m = c.match(/rgba?\(([^)]+)\)/);
+      if (!m) return false;
+      const p = m[1].split(",").map((s) => parseFloat(s));
+      return p.length === 4 && p[3] === 0;
+    }
+
+    function buildEditFields(el: Element): EditField[] {
+      const s = window.getComputedStyle(el);
+      const fields: EditField[] = [];
+      const fontSize = px(s.fontSize) || 16;
+
+      // Typography — always relevant
+      fields.push({
+        prop: "font-size",
+        label: "Size",
+        kind: "length",
+        unit: "px",
+        value: String(round(fontSize)),
+        min: 6,
+        max: 200,
+        step: 1,
+      });
+      fields.push({
+        prop: "line-height",
+        label: "Line height",
+        kind: "number",
+        value: String(
+          round(s.lineHeight === "normal" ? 1.2 : px(s.lineHeight) / fontSize, 2),
+        ),
+        min: 0.8,
+        max: 3,
+        step: 0.05,
+      });
+      fields.push({
+        prop: "letter-spacing",
+        label: "Letter spacing",
+        kind: "length",
+        unit: "px",
+        value: String(round(s.letterSpacing === "normal" ? 0 : px(s.letterSpacing), 1)),
+        min: -5,
+        max: 20,
+        step: 0.1,
+      });
+      fields.push({
+        prop: "font-weight",
+        label: "Weight",
+        kind: "number",
+        value: String(px(s.fontWeight) || 400),
+        min: 100,
+        max: 900,
+        step: 100,
+      });
+      fields.push({
+        prop: "color",
+        label: "Text color",
+        kind: "color",
+        value: rgbToHex(s.color),
+      });
+
+      // Contextual — only when set on this element
+      if (!isTransparent(s.backgroundColor)) {
+        fields.push({
+          prop: "background-color",
+          label: "Background",
+          kind: "color",
+          value: rgbToHex(s.backgroundColor),
+        });
+      }
+      if (px(s.opacity) < 1) {
+        fields.push({
+          prop: "opacity",
+          label: "Opacity",
+          kind: "number",
+          value: String(round(px(s.opacity), 2)),
+          min: 0,
+          max: 1,
+          step: 0.05,
+        });
+      }
+      if (px(s.borderTopLeftRadius) > 0) {
+        fields.push({
+          prop: "border-radius",
+          label: "Radius",
+          kind: "length",
+          unit: "px",
+          value: String(round(px(s.borderTopLeftRadius))),
+          min: 0,
+          max: 80,
+          step: 1,
+        });
+      }
+      if (px(s.paddingTop) > 0) {
+        fields.push({
+          prop: "padding",
+          label: "Padding",
+          kind: "length",
+          unit: "px",
+          value: String(round(px(s.paddingTop))),
+          min: 0,
+          max: 96,
+          step: 1,
+        });
+      }
+
+      const display = s.display;
+      const isFlexGrid = /^(inline-)?(flex|grid)$/.test(display);
+      if (display && display !== "block" && display !== "inline") {
+        fields.push({
+          prop: "display",
+          label: "Display",
+          kind: "select",
+          value: display,
+          options: ["block", "inline", "inline-block", "flex", "inline-flex", "grid", "none"],
+        });
+      }
+      if (isFlexGrid) {
+        if (px(s.gap) > 0) {
+          fields.push({
+            prop: "gap",
+            label: "Gap",
+            kind: "length",
+            unit: "px",
+            value: String(round(px(s.gap))),
+            min: 0,
+            max: 64,
+            step: 1,
+          });
+        }
+        fields.push({
+          prop: "align-items",
+          label: "Align items",
+          kind: "select",
+          value: s.alignItems,
+          options: ["stretch", "flex-start", "center", "flex-end", "baseline"],
+        });
+        fields.push({
+          prop: "justify-content",
+          label: "Justify",
+          kind: "select",
+          value: s.justifyContent,
+          options: ["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"],
+        });
+      }
+      if (s.textAlign && s.textAlign !== "start" && s.textAlign !== "left") {
+        fields.push({
+          prop: "text-align",
+          label: "Text align",
+          kind: "select",
+          value: s.textAlign,
+          options: ["left", "center", "right", "justify"],
+        });
+      }
+
+      return fields;
     }
 
     function readFontData(target: Element): FontData {
@@ -155,6 +330,7 @@ export default defineContentScript({
       reactRoot?.render(
         <PopupCard
           data={popupState.data}
+          editFields={popupState.editFields}
           x={popupState.x}
           y={popupState.y}
           visible={popupState.visible}
@@ -246,7 +422,13 @@ export default defineContentScript({
       const x = Math.min(e.clientX + 12, window.innerWidth - 300);
       const y = Math.min(e.clientY + 12, window.innerHeight - 300);
 
-      popupState = { data: readFontData(target), x, y, visible: true };
+      popupState = {
+        data: readFontData(target),
+        editFields: buildEditFields(target),
+        x,
+        y,
+        visible: true,
+      };
       syncPopup();
     }
 
@@ -266,6 +448,22 @@ export default defineContentScript({
         [data-kolophon="popup-host"] button *,
         [data-kolophon="popup-host"] [data-clickable],
         [data-kolophon="popup-host"] [data-clickable] * { cursor: pointer !important; }
+        [data-kolophon="popup-host"] input[type="number"] {
+          cursor: text !important;
+          -moz-appearance: textfield;
+          appearance: textfield;
+        }
+        [data-kolophon="popup-host"] input[type="number"]::-webkit-inner-spin-button,
+        [data-kolophon="popup-host"] input[type="number"]::-webkit-outer-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        [data-kolophon="popup-host"] input[type="number"]:focus {
+          background: rgba(255,255,255,0.08) !important;
+        }
+        [data-kolophon="popup-host"] [data-drag] { cursor: grab !important; }
+        html[data-kolophon-dragging],
+        html[data-kolophon-dragging] * { cursor: grabbing !important; user-select: none !important; }
         [data-kolophon="exit"] { cursor: pointer !important; }
       `;
       document.documentElement.appendChild(cursorStyle);
