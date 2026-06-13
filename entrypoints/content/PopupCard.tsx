@@ -18,6 +18,8 @@ interface Props {
   y: number;
   visible: boolean;
   onClose: () => void;
+  // Live-apply a CSS property to the inspected element (edit view).
+  onStyleChange?: (prop: string, value: string) => void;
 }
 
 export type ColorFormat =
@@ -229,15 +231,56 @@ export const FORMAT_ORDER: ColorFormat[] = [
   "oklab",
 ];
 
+// ─── Edit view ──────────────────────────────────────────────────────────────
+// Live CSS controls that reuse the popup card as a second "page". Values seed
+// from the inspected element's computed styles and write back on every change.
+
+type View = "specs" | "edit";
+
+interface EditState {
+  fontSize: number;
+  lineHeight: number;
+  letterSpacing: number;
+  fontWeight: number;
+  color: string;
+}
+
+// Pull the leading number out of a computed value ("16px", "1.5"), falling
+// back when the value is non-numeric ("normal").
+function numOr(value: string, fallback: number): number {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function seedEdit(data: FontData): EditState {
+  const size = numOr(data.size, 16);
+  return {
+    fontSize: size,
+    // line-height computes to px; express as a ratio of size for a sane slider
+    lineHeight: Math.round((numOr(data.lineHeight, size * 1.4) / size) * 100) / 100,
+    letterSpacing: numOr(data.letterSpacing, 0),
+    fontWeight: numOr(data.weight, 400),
+    color: /^#[0-9a-f]{6}$/i.test(data.colorHex) ? data.colorHex : "#ffffff",
+  };
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export function PopupCard({ data, x, y, visible, onClose }: Props) {
+export function PopupCard({ data, x, y, visible, onClose, onStyleChange }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [colorFormat, setColorFormat] = useState<ColorFormat>("hex");
   const [copied, setCopied] = useState(false);
+  const [view, setView] = useState<View>("specs");
+  const [edit, setEdit] = useState<EditState | null>(null);
   const copiedTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
+
+  // New element clicked → reset to the spec page and reseed the edit controls.
+  useEffect(() => {
+    setView("specs");
+    setEdit(data ? seedEdit(data) : null);
+  }, [data]);
 
   if (!visible || !data) return null;
 
@@ -245,6 +288,10 @@ export function PopupCard({ data, x, y, visible, onClose }: Props) {
   const clampedY = Math.min(y, window.innerHeight - 280);
 
   const colorValues = buildColorFormats(data.colorRgb, data.colorHex);
+
+  function patchEdit(patch: Partial<EditState>) {
+    setEdit((prev) => (prev ? { ...prev, ...patch } : prev));
+  }
 
   function handleCopy(e: React.MouseEvent) {
     e.stopPropagation();
@@ -267,50 +314,97 @@ export function PopupCard({ data, x, y, visible, onClose }: Props) {
         setDropdownOpen(false);
       }}
     >
-      <div style={styles.header}>
-        <div style={styles.nameGroup}>
-          <span
-            style={{
-              ...styles.fontName,
-              fontFamily: `'${data.name}', sans-serif`,
-            }}
-          >
-            {data.name}
-          </span>
-          <button
-            type="button"
-            style={
-              copied ? { ...styles.iconBtn, color: "#4ade80" } : styles.iconBtn
-            }
-            title={copied ? "Copied!" : "Copy family"}
-            onClick={handleCopy}
-          >
-            {copied ? <CheckIcon /> : <CopyIcon />}
-          </button>
+      {view === "edit" ? (
+        <div style={styles.header}>
+          <div style={styles.nameGroup}>
+            <button
+              style={styles.iconBtn}
+              title="Back"
+              onClick={(e) => {
+                e.stopPropagation();
+                setView("specs");
+              }}
+            >
+              <ArrowLeft />
+            </button>
+            <span style={styles.editTitle}>Edit styles</span>
+          </div>
+          <div style={styles.headerActions}>
+            <button style={styles.iconBtn} onClick={onClose} title="Close">
+              <X />
+            </button>
+          </div>
         </div>
-        <div style={styles.headerActions}>
-          <button
-            style={styles.iconBtn}
-            title="Expand"
-            onClick={(e) => {
-              e.stopPropagation();
-              browser.runtime
-                .sendMessage({
-                  type: "kolophon:open-sidepanel",
-                  site: readSiteInfo(),
-                  font: data,
-                })
-                .catch(() => {});
-            }}
-          >
-            <ExternalLink />
-          </button>
-          <button style={styles.iconBtn} onClick={onClose} title="Close">
-            <X />
-          </button>
+      ) : (
+        <div style={styles.header}>
+          <div style={styles.nameGroup}>
+            <span
+              style={{
+                ...styles.fontName,
+                fontFamily: `'${data.name}', sans-serif`,
+              }}
+            >
+              {data.name}
+            </span>
+            <button
+              type="button"
+              style={
+                copied
+                  ? { ...styles.iconBtn, color: "#4ade80" }
+                  : styles.iconBtn
+              }
+              title={copied ? "Copied!" : "Copy family"}
+              onClick={handleCopy}
+            >
+              {copied ? <CheckIcon /> : <CopyIcon />}
+            </button>
+          </div>
+          <div style={styles.headerActions}>
+            <button
+              style={styles.iconBtn}
+              title="Edit styles"
+              onClick={(e) => {
+                e.stopPropagation();
+                setView("edit");
+              }}
+            >
+              <Palette />
+            </button>
+            <button
+              style={styles.iconBtn}
+              title="Expand"
+              onClick={(e) => {
+                e.stopPropagation();
+                browser.runtime
+                  .sendMessage({
+                    type: "kolophon:open-sidepanel",
+                    site: readSiteInfo(),
+                    font: data,
+                  })
+                  .catch(() => {});
+              }}
+            >
+              <ExternalLink />
+            </button>
+            <button style={styles.iconBtn} onClick={onClose} title="Close">
+              <X />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
+      {view === "edit" && edit ? (
+        <EditPanel
+          edit={edit}
+          onChange={(patch, css) => {
+            patchEdit(patch);
+            for (const [prop, value] of Object.entries(css)) {
+              onStyleChange?.(prop, value);
+            }
+          }}
+        />
+      ) : (
+        <>
       <div style={styles.specs}>
         <SpecRow label="Size" value={data.size} />
 
@@ -369,6 +463,126 @@ export function PopupCard({ data, x, y, visible, onClose }: Props) {
       >
         AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwYyZz 0123456789@?!(&)
       </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Edit panel ─────────────────────────────────────────────────────────────
+
+function EditPanel({
+  edit,
+  onChange,
+}: {
+  edit: EditState;
+  onChange: (patch: Partial<EditState>, css: Record<string, string>) => void;
+}) {
+  return (
+    <div style={styles.editBody}>
+      <SliderRow
+        label="Size"
+        value={edit.fontSize}
+        min={6}
+        max={120}
+        step={1}
+        display={`${edit.fontSize}px`}
+        onChange={(v) =>
+          onChange({ fontSize: v }, { "font-size": `${v}px` })
+        }
+      />
+      <SliderRow
+        label="Line height"
+        value={edit.lineHeight}
+        min={0.8}
+        max={3}
+        step={0.05}
+        display={edit.lineHeight.toFixed(2)}
+        onChange={(v) =>
+          onChange({ lineHeight: v }, { "line-height": String(v) })
+        }
+      />
+      <SliderRow
+        label="Letter spacing"
+        value={edit.letterSpacing}
+        min={-5}
+        max={20}
+        step={0.1}
+        display={`${edit.letterSpacing}px`}
+        onChange={(v) =>
+          onChange(
+            { letterSpacing: v },
+            { "letter-spacing": `${v}px` },
+          )
+        }
+      />
+      <SliderRow
+        label="Weight"
+        value={edit.fontWeight}
+        min={100}
+        max={900}
+        step={100}
+        display={String(edit.fontWeight)}
+        onChange={(v) =>
+          onChange({ fontWeight: v }, { "font-weight": String(v) })
+        }
+      />
+
+      <div style={styles.editRow}>
+        <span style={styles.editLabel}>Color</span>
+        <label style={styles.colorControl} data-clickable>
+          <span style={{ ...styles.colorSwatch, background: edit.color }} />
+          <span style={styles.colorValue}>{edit.color}</span>
+          <input
+            type="color"
+            value={edit.color}
+            style={styles.colorInput}
+            data-clickable
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) =>
+              onChange({ color: e.target.value }, { color: e.target.value })
+            }
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function SliderRow({
+  label,
+  value,
+  min,
+  max,
+  step,
+  display,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  display: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div style={styles.editRow}>
+      <div style={styles.editRowHead}>
+        <span style={styles.editLabel}>{label}</span>
+        <span style={styles.editValue}>{display}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        data-clickable
+        style={styles.slider}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+      />
     </div>
   );
 }
@@ -499,6 +713,47 @@ function X() {
   );
 }
 
+function Palette() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2Z" />
+    </svg>
+  );
+}
+
+function ArrowLeft() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m12 19-7-7 7-7" />
+      <path d="M19 12H5" />
+    </svg>
+  );
+}
+
 const styles = {
   card: (x: number, y: number): React.CSSProperties => ({
     position: "fixed",
@@ -617,5 +872,87 @@ const styles = {
     color: "rgba(255,255,255,0.8)",
     overflowWrap: "break-word",
     margin: 0,
+  } as React.CSSProperties,
+
+  editTitle: {
+    fontSize: 14,
+    fontWeight: 600,
+    letterSpacing: "-0.01em",
+    color: "#fff",
+  } as React.CSSProperties,
+
+  editBody: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 14,
+  } as React.CSSProperties,
+
+  editRow: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 7,
+  } as React.CSSProperties,
+
+  editRowHead: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+  } as React.CSSProperties,
+
+  editLabel: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.4)",
+  } as React.CSSProperties,
+
+  editValue: {
+    fontSize: 12,
+    fontFamily: "ui-monospace, 'Cascadia Code', monospace",
+    color: "#fff",
+  } as React.CSSProperties,
+
+  slider: {
+    width: "100%",
+    height: 3,
+    appearance: "none",
+    WebkitAppearance: "none",
+    background: "rgba(255,255,255,0.15)",
+    outline: "none",
+    accentColor: "#2252FE",
+    margin: 0,
+  } as React.CSSProperties,
+
+  colorControl: {
+    position: "relative",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 8px",
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.10)",
+    cursor: "pointer",
+  } as React.CSSProperties,
+
+  colorSwatch: {
+    width: 16,
+    height: 16,
+    border: "1px solid rgba(255,255,255,0.2)",
+    flexShrink: 0,
+  } as React.CSSProperties,
+
+  colorValue: {
+    fontSize: 12,
+    fontFamily: "ui-monospace, 'Cascadia Code', monospace",
+    color: "#fff",
+  } as React.CSSProperties,
+
+  colorInput: {
+    position: "absolute",
+    inset: 0,
+    opacity: 0,
+    width: "100%",
+    height: "100%",
+    border: "none",
+    padding: 0,
+    cursor: "pointer",
   } as React.CSSProperties,
 };

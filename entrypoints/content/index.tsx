@@ -17,6 +17,9 @@ export default defineContentScript({
     let popupOpen = false;
 
     let reactRoot: Root | null = null;
+    // The element the popup is currently describing. Held so the edit view can
+    // mutate its inline styles in real time (popupState.data is only a snapshot).
+    let popupTarget: Element | null = null;
     let popupState = {
       data: null as FontData | null,
       x: 0,
@@ -156,8 +159,17 @@ export default defineContentScript({
           y={popupState.y}
           visible={popupState.visible}
           onClose={closePopup}
+          onStyleChange={applyStyle}
         />,
       );
+    }
+
+    // Live-edit the inspected element's inline styles from the edit view, then
+    // keep the highlight overlay glued to it as its box changes.
+    function applyStyle(prop: string, value: string) {
+      if (!popupTarget) return;
+      (popupTarget as HTMLElement).style.setProperty(prop, value);
+      track(popupTarget);
     }
 
     // ─── Tracking ─────────────────────────────────────────────────────────────
@@ -215,6 +227,7 @@ export default defineContentScript({
 
     function closePopup() {
       popupOpen = false;
+      popupTarget = null;
       popupState = { ...popupState, visible: false };
       syncPopup();
     }
@@ -228,6 +241,7 @@ export default defineContentScript({
       e.stopPropagation();
 
       popupOpen = true;
+      popupTarget = target;
 
       const x = Math.min(e.clientX + 12, window.innerWidth - 300);
       const y = Math.min(e.clientY + 12, window.innerHeight - 300);
