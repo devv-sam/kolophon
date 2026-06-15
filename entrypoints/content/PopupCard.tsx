@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 
 export interface FontData {
   name: string;
+  tag: string;
   family: string;
   style: string;
   weight: string;
@@ -12,12 +13,36 @@ export interface FontData {
   colorHex: string;
 }
 
+// A single editable CSS property, derived from the inspected element. Only
+// properties actually set on the element are emitted (see buildEditFields),
+// so the edit view is contextual to what's really on the page.
+export type EditFieldKind = "length" | "number" | "color" | "select";
+
+export interface EditField {
+  prop: string; // css property name, e.g. "font-size"
+  label: string; // human label, e.g. "Size"
+  kind: EditFieldKind;
+  value: string; // current value: number string, hex, or option
+  unit?: string; // for "length", e.g. "px"
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[]; // for "select"
+}
+
 interface Props {
   data: FontData | null;
+  editFields?: EditField[];
   x: number;
   y: number;
   visible: boolean;
+  // True while the Esc-to-quit discard prompt is showing.
+  confirmDiscard?: boolean;
   onClose: () => void;
+  // Live-apply a CSS property to the inspected element (edit view).
+  onStyleChange?: (prop: string, value: string) => void;
+  onConfirmDiscard?: () => void;
+  onCancelDiscard?: () => void;
 }
 
 export type ColorFormat =
@@ -229,22 +254,123 @@ export const FORMAT_ORDER: ColorFormat[] = [
   "oklab",
 ];
 
+// ─── Edit view ──────────────────────────────────────────────────────────────
+// Live CSS controls that reuse the popup card as a second "page". The field
+// list is contextual (built from the element); values write back on change.
+
+type View = "specs" | "edit";
+
+// Serialize a field's raw value to a css value (lengths get their unit).
+function cssValueOf(field: EditField, raw: string): string {
+  return field.kind === "length" ? `${raw}${field.unit ?? "px"}` : raw;
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export function PopupCard({ data, x, y, visible, onClose }: Props) {
+export function PopupCard({
+  data,
+  editFields = [],
+  x,
+  y,
+  visible,
+  confirmDiscard = false,
+  onClose,
+  onStyleChange,
+  onConfirmDiscard,
+  onCancelDiscard,
+}: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [colorFormat, setColorFormat] = useState<ColorFormat>("hex");
   const [copied, setCopied] = useState(false);
+  const [styleCopied, setStyleCopied] = useState(false);
+  const [view, setView] = useState<View>("specs");
+  // Live values keyed by css property, seeded from the contextual field list.
+  const [values, setValues] = useState<Record<string, string>>({});
+  // Drag offset from the spawn position; null until the user moves the card.
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragOrigin = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
   const copiedTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
+
+  // New element clicked → reset to the spec page, reseed controls, drop drag.
+  useEffect(() => {
+    setView("specs");
+    setValues(Object.fromEntries(editFields.map((f) => [f.prop, f.value])));
+    setDrag(null);
+    // editFields is rebuilt per click alongside data; data is the stable trigger
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  // While dragging, follow the pointer on window-level listeners so the card
+  // keeps moving even if the cursor outruns it.
+  useEffect(() => {
+    if (!dragging) return;
+    // Flag the document so the grabbing cursor wins over the crosshair override.
+    document.documentElement.setAttribute("data-kolophon-dragging", "");
+    function onMove(e: MouseEvent) {
+      const o = dragOrigin.current;
+      if (!o) return;
+      setDrag({ x: o.ox + (e.clientX - o.mx), y: o.oy + (e.clientY - o.my) });
+    }
+    function onUp() {
+      setDragging(false);
+      dragOrigin.current = null;
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      document.documentElement.removeAttribute("data-kolophon-dragging");
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [dragging]);
 
   if (!visible || !data) return null;
 
   const clampedX = Math.min(x, window.innerWidth - 300);
   const clampedY = Math.min(y, window.innerHeight - 280);
+  const posX = drag ? drag.x : clampedX;
+  const posY = drag ? drag.y : clampedY;
+
+  // Start a drag from the grip/header, ignoring presses on header buttons.
+  function onDragMouseDown(e: React.MouseEvent) {
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragOrigin.current = { mx: e.clientX, my: e.clientY, ox: posX, oy: posY };
+    setDragging(true);
+  }
 
   const colorValues = buildColorFormats(data.colorRgb, data.colorHex);
+
+  // Update local display value and live-apply the css to the element.
+  function applyField(field: EditField, raw: string) {
+    setValues((prev) => ({ ...prev, [field.prop]: raw }));
+    onStyleChange?.(field.prop, cssValueOf(field, raw));
+  }
+
+  // Copy the manipulated declarations. Prefers what actually changed; if
+  // nothing was touched yet, falls back to the element's current values.
+  function copyStyles(e: React.MouseEvent) {
+    e.stopPropagation();
+    const changed = editFields.filter(
+      (f) => (values[f.prop] ?? f.value) !== f.value,
+    );
+    const list = changed.length ? changed : editFields;
+    const css = list
+      .map((f) => `${f.prop}: ${cssValueOf(f, values[f.prop] ?? f.value)};`)
+      .join("\n");
+    navigator.clipboard
+      .writeText(css)
+      .then(() => {
+        setStyleCopied(true);
+        window.clearTimeout(copiedTimer.current);
+        copiedTimer.current = window.setTimeout(() => setStyleCopied(false), 1500);
+      })
+      .catch(() => {});
+  }
 
   function handleCopy(e: React.MouseEvent) {
     e.stopPropagation();
@@ -261,56 +387,141 @@ export function PopupCard({ data, x, y, visible, onClose }: Props) {
 
   return (
     <div
-      style={styles.card(clampedX, clampedY)}
+      style={styles.card(posX, posY)}
       onClick={(e) => {
         e.stopPropagation();
         setDropdownOpen(false);
       }}
     >
-      <div style={styles.header}>
-        <div style={styles.nameGroup}>
-          <span
-            style={{
-              ...styles.fontName,
-              fontFamily: `'${data.name}', sans-serif`,
-            }}
-          >
-            {data.name}
-          </span>
-          <button
-            type="button"
-            style={
-              copied ? { ...styles.iconBtn, color: "#4ade80" } : styles.iconBtn
-            }
-            title={copied ? "Copied!" : "Copy family"}
-            onClick={handleCopy}
-          >
-            {copied ? <CheckIcon /> : <CopyIcon />}
-          </button>
-        </div>
-        <div style={styles.headerActions}>
-          <button
-            style={styles.iconBtn}
-            title="Expand"
-            onClick={(e) => {
-              e.stopPropagation();
-              browser.runtime
-                .sendMessage({
-                  type: "kolophon:open-sidepanel",
-                  site: readSiteInfo(),
-                  font: data,
-                })
-                .catch(() => {});
-            }}
-          >
-            <ExternalLink />
-          </button>
-          <button style={styles.iconBtn} onClick={onClose} title="Close">
-            <X />
-          </button>
-        </div>
+      <div style={styles.dragHandle} data-drag onMouseDown={onDragMouseDown}>
+        <GripDots />
       </div>
 
+      {confirmDiscard ? (
+        <div style={styles.confirmBar}>
+          <span style={styles.confirmText}>Discard edits?</span>
+          <div style={styles.confirmBtns}>
+            <button
+              style={styles.confirmNo}
+              data-clickable
+              onClick={(e) => {
+                e.stopPropagation();
+                onCancelDiscard?.();
+              }}
+            >
+              No
+            </button>
+            <button
+              style={styles.confirmYes}
+              data-clickable
+              onClick={(e) => {
+                e.stopPropagation();
+                onConfirmDiscard?.();
+              }}
+            >
+              Yes
+            </button>
+          </div>
+        </div>
+      ) : view === "edit" ? (
+        <div style={styles.header} data-drag onMouseDown={onDragMouseDown}>
+          <div style={styles.nameGroup}>
+            <button
+              style={styles.iconBtn}
+              title="Back"
+              onClick={(e) => {
+                e.stopPropagation();
+                setView("specs");
+              }}
+            >
+              <ArrowLeft />
+            </button>
+            <span style={styles.editTitle}>{data.tag}</span>
+          </div>
+          <div style={styles.headerActions}>
+            <button
+              type="button"
+              style={
+                styleCopied
+                  ? { ...styles.iconBtn, color: "#4ade80" }
+                  : styles.iconBtn
+              }
+              title={styleCopied ? "Copied!" : "Copy style"}
+              onClick={copyStyles}
+            >
+              {styleCopied ? <CheckIcon /> : <CopyIcon />}
+            </button>
+            <button style={styles.iconBtn} onClick={onClose} title="Close">
+              <X />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={styles.header} data-drag onMouseDown={onDragMouseDown}>
+          <div style={styles.nameGroup}>
+            <span
+              style={{
+                ...styles.fontName,
+                fontFamily: `'${data.name}', sans-serif`,
+              }}
+            >
+              {data.name}
+            </span>
+            <button
+              type="button"
+              style={
+                copied
+                  ? { ...styles.iconBtn, color: "#4ade80" }
+                  : styles.iconBtn
+              }
+              title={copied ? "Copied!" : "Copy family"}
+              onClick={handleCopy}
+            >
+              {copied ? <CheckIcon /> : <CopyIcon />}
+            </button>
+          </div>
+          <div style={styles.headerActions}>
+            <button
+              style={styles.iconBtn}
+              title="Edit styles"
+              onClick={(e) => {
+                e.stopPropagation();
+                setView("edit");
+              }}
+            >
+              <Palette />
+            </button>
+            <button
+              style={styles.iconBtn}
+              title="Expand"
+              onClick={(e) => {
+                e.stopPropagation();
+                browser.runtime
+                  .sendMessage({
+                    type: "kolophon:open-sidepanel",
+                    site: readSiteInfo(),
+                    font: data,
+                  })
+                  .catch(() => {});
+              }}
+            >
+              <ExternalLink />
+            </button>
+            <button style={styles.iconBtn} onClick={onClose} title="Close">
+              <X />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {view === "edit" ? (
+        <EditPanel
+          fields={editFields}
+          values={values}
+          onChange={applyField}
+        />
+      ) : (
+        <>
       <div style={styles.specs}>
         <SpecRow label="Size" value={data.size} />
 
@@ -369,6 +580,146 @@ export function PopupCard({ data, x, y, visible, onClose }: Props) {
       >
         AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwYyZz 0123456789@?!(&)
       </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Edit panel ─────────────────────────────────────────────────────────────
+// Renders the contextual field list. Scrolls within a fixed height so a heavily
+// styled element doesn't blow out the card.
+
+function EditPanel({
+  fields,
+  values,
+  onChange,
+}: {
+  fields: EditField[];
+  values: Record<string, string>;
+  onChange: (field: EditField, raw: string) => void;
+}) {
+  if (fields.length === 0) {
+    return <div style={styles.editEmpty}>No editable properties.</div>;
+  }
+  return (
+    <div style={styles.editBody}>
+      {fields.map((f) => {
+        const value = values[f.prop] ?? f.value;
+        if (f.kind === "color") {
+          return <ColorRow key={f.prop} field={f} value={value} onChange={onChange} />;
+        }
+        if (f.kind === "select") {
+          return <SelectRow key={f.prop} field={f} value={value} onChange={onChange} />;
+        }
+        return <NumberRow key={f.prop} field={f} value={value} onChange={onChange} />;
+      })}
+    </div>
+  );
+}
+
+// Slider plus a manual numeric input that stay in sync.
+function NumberRow({
+  field,
+  value,
+  onChange,
+}: {
+  field: EditField;
+  value: string;
+  onChange: (field: EditField, raw: string) => void;
+}) {
+  return (
+    <div style={styles.editRow}>
+      <div style={styles.editRowHead}>
+        <span style={styles.editLabel}>{field.label}</span>
+        <span style={styles.numberEntry}>
+          <input
+            type="number"
+            value={value}
+            min={field.min}
+            max={field.max}
+            step={field.step}
+            data-clickable
+            style={styles.numberInput}
+            onClick={(e) => e.stopPropagation()}
+            // Blur on wheel so scrolling over the field never nudges the value.
+            onWheel={(e) => (e.target as HTMLInputElement).blur()}
+            onChange={(e) => onChange(field, e.target.value)}
+          />
+          {field.unit && <span style={styles.unit}>{field.unit}</span>}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={field.min}
+        max={field.max}
+        step={field.step}
+        value={value}
+        data-clickable
+        style={styles.slider}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => onChange(field, e.target.value)}
+      />
+    </div>
+  );
+}
+
+function SelectRow({
+  field,
+  value,
+  onChange,
+}: {
+  field: EditField;
+  value: string;
+  onChange: (field: EditField, raw: string) => void;
+}) {
+  const options = field.options ?? [];
+  // Keep the current computed value selectable even if it's outside our list.
+  const all = options.includes(value) ? options : [value, ...options];
+  return (
+    <div style={styles.editRowInline}>
+      <span style={styles.editLabel}>{field.label}</span>
+      <select
+        value={value}
+        data-clickable
+        style={styles.select}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => onChange(field, e.target.value)}
+      >
+        {all.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function ColorRow({
+  field,
+  value,
+  onChange,
+}: {
+  field: EditField;
+  value: string;
+  onChange: (field: EditField, raw: string) => void;
+}) {
+  return (
+    <div style={styles.editRowInline}>
+      <span style={styles.editLabel}>{field.label}</span>
+      <label style={styles.colorControl} data-clickable>
+        <span style={{ ...styles.colorSwatch, background: value }} />
+        <span style={styles.colorValue}>{value}</span>
+        <input
+          type="color"
+          value={value}
+          style={styles.colorInput}
+          data-clickable
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onChange(field, e.target.value)}
+        />
+      </label>
     </div>
   );
 }
@@ -499,6 +850,67 @@ function X() {
   );
 }
 
+function Palette() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2Z" />
+    </svg>
+  );
+}
+
+function ArrowLeft() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m12 19-7-7 7-7" />
+      <path d="M19 12H5" />
+    </svg>
+  );
+}
+
+function GripDots() {
+  return (
+    <svg
+      width="20"
+      height="9"
+      viewBox="0 0 20 9"
+      fill="currentColor"
+      aria-hidden="true"
+      style={{ pointerEvents: "none" }}
+    >
+      <circle cx="3" cy="2.5" r="1.3" />
+      <circle cx="10" cy="2.5" r="1.3" />
+      <circle cx="17" cy="2.5" r="1.3" />
+      <circle cx="3" cy="6.5" r="1.3" />
+      <circle cx="10" cy="6.5" r="1.3" />
+      <circle cx="17" cy="6.5" r="1.3" />
+    </svg>
+  );
+}
+
 const styles = {
   card: (x: number, y: number): React.CSSProperties => ({
     position: "fixed",
@@ -510,7 +922,7 @@ const styles = {
     WebkitBackdropFilter: "blur(16px) saturate(1.4)",
     border: "1px solid rgba(255,255,255,0.10)",
     boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
-    padding: "14px 16px",
+    padding: "6px 16px 14px",
     pointerEvents: "auto",
     fontFamily: "system-ui, -apple-system, sans-serif",
     color: "#fff",
@@ -518,6 +930,57 @@ const styles = {
     borderRadius: 0,
     overflow: "visible",
   }),
+
+  dragHandle: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    height: 14,
+    marginBottom: 4,
+    color: "rgba(255,255,255,0.28)",
+  } as React.CSSProperties,
+
+  confirmBar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+    gap: 8,
+  } as React.CSSProperties,
+
+  confirmText: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: "#fff",
+  } as React.CSSProperties,
+
+  confirmBtns: {
+    display: "flex",
+    gap: 6,
+    flexShrink: 0,
+  } as React.CSSProperties,
+
+  confirmNo: {
+    background: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: 600,
+    fontFamily: "system-ui, -apple-system, sans-serif",
+    padding: "4px 12px",
+    cursor: "pointer",
+  } as React.CSSProperties,
+
+  confirmYes: {
+    background: "rgba(248, 81, 73, 0.18)",
+    border: "1px solid rgba(248, 81, 73, 0.45)",
+    color: "#ff6b63",
+    fontSize: 12,
+    fontWeight: 600,
+    fontFamily: "system-ui, -apple-system, sans-serif",
+    padding: "4px 12px",
+    cursor: "pointer",
+  } as React.CSSProperties,
 
   header: {
     display: "flex",
@@ -617,5 +1080,137 @@ const styles = {
     color: "rgba(255,255,255,0.8)",
     overflowWrap: "break-word",
     margin: 0,
+  } as React.CSSProperties,
+
+  editTitle: {
+    fontSize: 14,
+    fontWeight: 600,
+    letterSpacing: "-0.01em",
+    color: "#fff",
+  } as React.CSSProperties,
+
+  editBody: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 14,
+    // Cap height so a heavily-styled element scrolls instead of growing the
+    // card past the viewport. Negative margin + padding keeps the scrollbar
+    // off the content while preserving the card's edge padding.
+    maxHeight: "min(48vh, 360px)",
+    overflowY: "auto",
+    margin: "0 -4px",
+    padding: "1px 4px",
+  } as React.CSSProperties,
+
+  editEmpty: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.4)",
+    padding: "4px 0",
+  } as React.CSSProperties,
+
+  editRow: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 7,
+  } as React.CSSProperties,
+
+  editRowInline: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+  } as React.CSSProperties,
+
+  editRowHead: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  } as React.CSSProperties,
+
+  editLabel: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.4)",
+  } as React.CSSProperties,
+
+  numberEntry: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: 3,
+  } as React.CSSProperties,
+
+  numberInput: {
+    // Reads as plain text; the injected stylesheet strips spinners and adds a
+    // borderless focus fill so clicking in never shifts the layout.
+    width: 52,
+    background: "transparent",
+    border: "none",
+    outline: "none",
+    color: "#fff",
+    fontSize: 12,
+    fontFamily: "ui-monospace, 'Cascadia Code', monospace",
+    textAlign: "right",
+    padding: "2px 4px",
+    borderRadius: 3,
+  } as React.CSSProperties,
+
+  unit: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.4)",
+  } as React.CSSProperties,
+
+  select: {
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.10)",
+    color: "#fff",
+    fontSize: 12,
+    fontFamily: "ui-monospace, 'Cascadia Code', monospace",
+    padding: "3px 6px",
+    cursor: "pointer",
+  } as React.CSSProperties,
+
+  slider: {
+    width: "100%",
+    height: 3,
+    appearance: "none",
+    WebkitAppearance: "none",
+    background: "rgba(255,255,255,0.15)",
+    outline: "none",
+    accentColor: "#2252FE",
+    margin: 0,
+  } as React.CSSProperties,
+
+  colorControl: {
+    position: "relative",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 8px",
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.10)",
+    cursor: "pointer",
+  } as React.CSSProperties,
+
+  colorSwatch: {
+    width: 16,
+    height: 16,
+    border: "1px solid rgba(255,255,255,0.2)",
+    flexShrink: 0,
+  } as React.CSSProperties,
+
+  colorValue: {
+    fontSize: 12,
+    fontFamily: "ui-monospace, 'Cascadia Code', monospace",
+    color: "#fff",
+  } as React.CSSProperties,
+
+  colorInput: {
+    position: "absolute",
+    inset: 0,
+    opacity: 0,
+    width: "100%",
+    height: "100%",
+    border: "none",
+    padding: 0,
+    cursor: "pointer",
   } as React.CSSProperties,
 };
