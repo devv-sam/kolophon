@@ -20,12 +20,16 @@ export default defineContentScript({
     // The element the popup is currently describing. Held so the edit view can
     // mutate its inline styles in real time (popupState.data is only a snapshot).
     let popupTarget: Element | null = null;
+    // Every element we've live-edited → its original inline cssText, so edits
+    // can be fully reverted if the user discards on quit.
+    const editedStyles = new Map<HTMLElement, string>();
     let popupState = {
       data: null as FontData | null,
       editFields: [] as EditField[],
       x: 0,
       y: 0,
       visible: false,
+      confirmDiscard: false,
     };
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -224,6 +228,7 @@ export default defineContentScript({
       const s = window.getComputedStyle(target);
       return {
         name: parseFontName(s.fontFamily),
+        tag: target.tagName.toLowerCase() || "element",
         family: s.fontFamily,
         style: s.fontStyle,
         weight: s.fontWeight,
@@ -334,8 +339,11 @@ export default defineContentScript({
           x={popupState.x}
           y={popupState.y}
           visible={popupState.visible}
+          confirmDiscard={popupState.confirmDiscard}
           onClose={closePopup}
           onStyleChange={applyStyle}
+          onConfirmDiscard={discardEdits}
+          onCancelDiscard={cancelDiscard}
         />,
       );
     }
@@ -344,8 +352,24 @@ export default defineContentScript({
     // keep the highlight overlay glued to it as its box changes.
     function applyStyle(prop: string, value: string) {
       if (!popupTarget) return;
-      (popupTarget as HTMLElement).style.setProperty(prop, value);
+      const el = popupTarget as HTMLElement;
+      // Snapshot the untouched inline style the first time we edit this element.
+      if (!editedStyles.has(el)) editedStyles.set(el, el.style.cssText);
+      el.style.setProperty(prop, value);
       track(popupTarget);
+    }
+
+    // Yes → roll every edited element back to its original inline style, then quit.
+    function discardEdits() {
+      for (const [el, css] of editedStyles) el.style.cssText = css;
+      editedStyles.clear();
+      disable();
+    }
+
+    // No → dismiss the prompt and keep editing.
+    function cancelDiscard() {
+      popupState = { ...popupState, confirmDiscard: false };
+      syncPopup();
     }
 
     // ─── Tracking ─────────────────────────────────────────────────────────────
@@ -398,13 +422,23 @@ export default defineContentScript({
     }
 
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") disable();
+      if (e.key !== "Escape") return;
+      // Already asking — wait for an explicit No/Yes rather than quitting.
+      if (popupState.confirmDiscard) return;
+      // Unsaved edits → surface the discard prompt in the card instead of quitting.
+      if (editedStyles.size > 0) {
+        popupOpen = true;
+        popupState = { ...popupState, visible: true, confirmDiscard: true };
+        syncPopup();
+        return;
+      }
+      disable();
     }
 
     function closePopup() {
       popupOpen = false;
       popupTarget = null;
-      popupState = { ...popupState, visible: false };
+      popupState = { ...popupState, visible: false, confirmDiscard: false };
       syncPopup();
     }
 
@@ -428,6 +462,7 @@ export default defineContentScript({
         x,
         y,
         visible: true,
+        confirmDiscard: false,
       };
       syncPopup();
     }
@@ -479,6 +514,8 @@ export default defineContentScript({
     function disable() {
       active = false;
       popupOpen = false;
+      editedStyles.clear();
+      popupState = { ...popupState, confirmDiscard: false };
       hide();
       cursorStyle?.remove();
       cursorStyle = null;

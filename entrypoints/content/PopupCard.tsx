@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 
 export interface FontData {
   name: string;
+  tag: string;
   family: string;
   style: string;
   weight: string;
@@ -35,9 +36,13 @@ interface Props {
   x: number;
   y: number;
   visible: boolean;
+  // True while the Esc-to-quit discard prompt is showing.
+  confirmDiscard?: boolean;
   onClose: () => void;
   // Live-apply a CSS property to the inspected element (edit view).
   onStyleChange?: (prop: string, value: string) => void;
+  onConfirmDiscard?: () => void;
+  onCancelDiscard?: () => void;
 }
 
 export type ColorFormat =
@@ -255,6 +260,11 @@ export const FORMAT_ORDER: ColorFormat[] = [
 
 type View = "specs" | "edit";
 
+// Serialize a field's raw value to a css value (lengths get their unit).
+function cssValueOf(field: EditField, raw: string): string {
+  return field.kind === "length" ? `${raw}${field.unit ?? "px"}` : raw;
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function PopupCard({
@@ -263,12 +273,16 @@ export function PopupCard({
   x,
   y,
   visible,
+  confirmDiscard = false,
   onClose,
   onStyleChange,
+  onConfirmDiscard,
+  onCancelDiscard,
 }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [colorFormat, setColorFormat] = useState<ColorFormat>("hex");
   const [copied, setCopied] = useState(false);
+  const [styleCopied, setStyleCopied] = useState(false);
   const [view, setView] = useState<View>("specs");
   // Live values keyed by css property, seeded from the contextual field list.
   const [values, setValues] = useState<Record<string, string>>({});
@@ -320,8 +334,8 @@ export function PopupCard({
   const posX = drag ? drag.x : clampedX;
   const posY = drag ? drag.y : clampedY;
 
-  // Start a drag from the header, ignoring presses on its buttons.
-  function onHeaderMouseDown(e: React.MouseEvent) {
+  // Start a drag from the grip/header, ignoring presses on header buttons.
+  function onDragMouseDown(e: React.MouseEvent) {
     if ((e.target as HTMLElement).closest("button")) return;
     e.preventDefault();
     e.stopPropagation();
@@ -334,9 +348,28 @@ export function PopupCard({
   // Update local display value and live-apply the css to the element.
   function applyField(field: EditField, raw: string) {
     setValues((prev) => ({ ...prev, [field.prop]: raw }));
-    const css =
-      field.kind === "length" ? `${raw}${field.unit ?? "px"}` : raw;
-    onStyleChange?.(field.prop, css);
+    onStyleChange?.(field.prop, cssValueOf(field, raw));
+  }
+
+  // Copy the manipulated declarations. Prefers what actually changed; if
+  // nothing was touched yet, falls back to the element's current values.
+  function copyStyles(e: React.MouseEvent) {
+    e.stopPropagation();
+    const changed = editFields.filter(
+      (f) => (values[f.prop] ?? f.value) !== f.value,
+    );
+    const list = changed.length ? changed : editFields;
+    const css = list
+      .map((f) => `${f.prop}: ${cssValueOf(f, values[f.prop] ?? f.value)};`)
+      .join("\n");
+    navigator.clipboard
+      .writeText(css)
+      .then(() => {
+        setStyleCopied(true);
+        window.clearTimeout(copiedTimer.current);
+        copiedTimer.current = window.setTimeout(() => setStyleCopied(false), 1500);
+      })
+      .catch(() => {});
   }
 
   function handleCopy(e: React.MouseEvent) {
@@ -360,12 +393,38 @@ export function PopupCard({
         setDropdownOpen(false);
       }}
     >
-      {view === "edit" ? (
-        <div
-          style={styles.header}
-          data-drag
-          onMouseDown={onHeaderMouseDown}
-        >
+      <div style={styles.dragHandle} data-drag onMouseDown={onDragMouseDown}>
+        <GripDots />
+      </div>
+
+      {confirmDiscard ? (
+        <div style={styles.confirmBar}>
+          <span style={styles.confirmText}>Discard edits?</span>
+          <div style={styles.confirmBtns}>
+            <button
+              style={styles.confirmNo}
+              data-clickable
+              onClick={(e) => {
+                e.stopPropagation();
+                onCancelDiscard?.();
+              }}
+            >
+              No
+            </button>
+            <button
+              style={styles.confirmYes}
+              data-clickable
+              onClick={(e) => {
+                e.stopPropagation();
+                onConfirmDiscard?.();
+              }}
+            >
+              Yes
+            </button>
+          </div>
+        </div>
+      ) : view === "edit" ? (
+        <div style={styles.header} data-drag onMouseDown={onDragMouseDown}>
           <div style={styles.nameGroup}>
             <button
               style={styles.iconBtn}
@@ -377,20 +436,28 @@ export function PopupCard({
             >
               <ArrowLeft />
             </button>
-            <span style={styles.editTitle}>Edit styles</span>
+            <span style={styles.editTitle}>{data.tag}</span>
           </div>
           <div style={styles.headerActions}>
+            <button
+              type="button"
+              style={
+                styleCopied
+                  ? { ...styles.iconBtn, color: "#4ade80" }
+                  : styles.iconBtn
+              }
+              title={styleCopied ? "Copied!" : "Copy style"}
+              onClick={copyStyles}
+            >
+              {styleCopied ? <CheckIcon /> : <CopyIcon />}
+            </button>
             <button style={styles.iconBtn} onClick={onClose} title="Close">
               <X />
             </button>
           </div>
         </div>
       ) : (
-        <div
-          style={styles.header}
-          data-drag
-          onMouseDown={onHeaderMouseDown}
-        >
+        <div style={styles.header} data-drag onMouseDown={onDragMouseDown}>
           <div style={styles.nameGroup}>
             <span
               style={{
@@ -824,6 +891,26 @@ function ArrowLeft() {
   );
 }
 
+function GripDots() {
+  return (
+    <svg
+      width="20"
+      height="9"
+      viewBox="0 0 20 9"
+      fill="currentColor"
+      aria-hidden="true"
+      style={{ pointerEvents: "none" }}
+    >
+      <circle cx="3" cy="2.5" r="1.3" />
+      <circle cx="10" cy="2.5" r="1.3" />
+      <circle cx="17" cy="2.5" r="1.3" />
+      <circle cx="3" cy="6.5" r="1.3" />
+      <circle cx="10" cy="6.5" r="1.3" />
+      <circle cx="17" cy="6.5" r="1.3" />
+    </svg>
+  );
+}
+
 const styles = {
   card: (x: number, y: number): React.CSSProperties => ({
     position: "fixed",
@@ -835,7 +922,7 @@ const styles = {
     WebkitBackdropFilter: "blur(16px) saturate(1.4)",
     border: "1px solid rgba(255,255,255,0.10)",
     boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
-    padding: "14px 16px",
+    padding: "6px 16px 14px",
     pointerEvents: "auto",
     fontFamily: "system-ui, -apple-system, sans-serif",
     color: "#fff",
@@ -843,6 +930,57 @@ const styles = {
     borderRadius: 0,
     overflow: "visible",
   }),
+
+  dragHandle: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    height: 14,
+    marginBottom: 4,
+    color: "rgba(255,255,255,0.28)",
+  } as React.CSSProperties,
+
+  confirmBar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+    gap: 8,
+  } as React.CSSProperties,
+
+  confirmText: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: "#fff",
+  } as React.CSSProperties,
+
+  confirmBtns: {
+    display: "flex",
+    gap: 6,
+    flexShrink: 0,
+  } as React.CSSProperties,
+
+  confirmNo: {
+    background: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: 600,
+    fontFamily: "system-ui, -apple-system, sans-serif",
+    padding: "4px 12px",
+    cursor: "pointer",
+  } as React.CSSProperties,
+
+  confirmYes: {
+    background: "rgba(248, 81, 73, 0.18)",
+    border: "1px solid rgba(248, 81, 73, 0.45)",
+    color: "#ff6b63",
+    fontSize: 12,
+    fontWeight: 600,
+    fontFamily: "system-ui, -apple-system, sans-serif",
+    padding: "4px 12px",
+    cursor: "pointer",
+  } as React.CSSProperties,
 
   header: {
     display: "flex",
