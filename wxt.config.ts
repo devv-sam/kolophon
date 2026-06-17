@@ -4,7 +4,8 @@ export default defineConfig({
   modules: ["@wxt-dev/module-react"],
   manifest: {
     name: "kolophon",
-    description: "Inspect, load, and copy any font on any page.",
+    description:
+      "Inspect, copy, and tweak the fonts on any web page. Hover to reveal type, copy CSS, edit live, and save fonts you love.",
     version: "1.0.0",
     permissions: [
       "activeTab",
