@@ -289,7 +289,12 @@ export function PopupCard({
   // Drag offset from the spawn position; null until the user moves the card.
   const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState(false);
-  const dragOrigin = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
+  const dragOrigin = useRef<{
+    mx: number;
+    my: number;
+    ox: number;
+    oy: number;
+  } | null>(null);
   const copiedTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
@@ -367,7 +372,10 @@ export function PopupCard({
       .then(() => {
         setStyleCopied(true);
         window.clearTimeout(copiedTimer.current);
-        copiedTimer.current = window.setTimeout(() => setStyleCopied(false), 1500);
+        copiedTimer.current = window.setTimeout(
+          () => setStyleCopied(false),
+          1500,
+        );
       })
       .catch(() => {});
   }
@@ -515,71 +523,73 @@ export function PopupCard({
       )}
 
       {view === "edit" ? (
-        <EditPanel
-          fields={editFields}
-          values={values}
-          onChange={applyField}
-        />
+        <EditPanel fields={editFields} values={values} onChange={applyField} />
       ) : (
         <>
-      <div style={styles.specs}>
-        <SpecRow label="Size" value={data.size} />
+          <div style={styles.specs}>
+            <SpecRow label="Size" value={data.size} />
 
-        <div style={styles.specRow}>
-          <span style={styles.specLabel}>Color:</span>
-          <span
-            data-clickable
-            style={{
-              ...styles.specValue,
-              cursor: "pointer",
-              userSelect: "none",
-              position: "relative",
-            }}
-            onMouseEnter={() => setDropdownOpen(true)}
-            onMouseLeave={() => setDropdownOpen(false)}
-          >
-            <Swatch color={data.colorRgb} />
-            {colorValues[colorFormat]}
-            <span
-              style={{
-                marginLeft: 5,
-                opacity: 0.45,
-                display: "flex",
-                alignItems: "center",
-              }}
-            >
-              <ChevronDown />
-            </span>
+            <div style={styles.specRow}>
+              <span style={styles.specLabel}>Color:</span>
+              <span
+                data-clickable
+                style={{
+                  ...styles.specValue,
+                  cursor: "pointer",
+                  userSelect: "none",
+                  position: "relative",
+                }}
+                onMouseEnter={() => setDropdownOpen(true)}
+                onMouseLeave={() => setDropdownOpen(false)}
+              >
+                <Swatch color={data.colorRgb} />
+                {colorValues[colorFormat]}
+                <span
+                  style={{
+                    marginLeft: 5,
+                    opacity: 0.45,
+                    display: "flex",
+                    alignItems: "center",
+                  }}
+                >
+                  <ChevronDown />
+                </span>
 
-            {dropdownOpen && (
-              <div style={styles.dropdown} onClick={(e) => e.stopPropagation()}>
-                {FORMAT_ORDER.map((fmt) => (
+                {dropdownOpen && (
                   <div
-                    key={fmt}
-                    data-clickable
-                    style={styles.dropdownOption(fmt === colorFormat)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setColorFormat(fmt);
-                      setDropdownOpen(false);
-                    }}
+                    style={styles.dropdown}
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    {colorValues[fmt]}
+                    {FORMAT_ORDER.map((fmt) => (
+                      <div
+                        key={fmt}
+                        data-clickable
+                        style={styles.dropdownOption(fmt === colorFormat)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setColorFormat(fmt);
+                          setDropdownOpen(false);
+                        }}
+                      >
+                        {colorValues[fmt]}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-          </span>
-        </div>
+                )}
+              </span>
+            </div>
 
-        <SpecRow label="Line Height" value={data.lineHeight} />
-      </div>
+            <SpecRow label="Line Height" value={data.lineHeight} />
+          </div>
 
-      <div
-        style={{ ...styles.specimen, fontFamily: `'${data.name}', sans-serif` }}
-      >
-        AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwYyZz 0123456789@?!(&)
-      </div>
+          <div
+            style={{
+              ...styles.specimen,
+              fontFamily: `'${data.name}', sans-serif`,
+            }}
+          >
+            AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwYyZz 0123456789@?!(&)
+          </div>
         </>
       )}
     </div>
@@ -607,12 +617,28 @@ function EditPanel({
       {fields.map((f) => {
         const value = values[f.prop] ?? f.value;
         if (f.kind === "color") {
-          return <ColorRow key={f.prop} field={f} value={value} onChange={onChange} />;
+          return (
+            <ColorRow
+              key={f.prop}
+              field={f}
+              value={value}
+              onChange={onChange}
+            />
+          );
         }
         if (f.kind === "select") {
-          return <SelectRow key={f.prop} field={f} value={value} onChange={onChange} />;
+          return (
+            <SelectRow
+              key={f.prop}
+              field={f}
+              value={value}
+              onChange={onChange}
+            />
+          );
         }
-        return <NumberRow key={f.prop} field={f} value={value} onChange={onChange} />;
+        return (
+          <NumberRow key={f.prop} field={f} value={value} onChange={onChange} />
+        );
       })}
     </div>
   );
@@ -927,7 +953,7 @@ const styles = {
     fontFamily: "system-ui, -apple-system, sans-serif",
     color: "#fff",
     zIndex: 2147483647,
-    borderRadius: 0,
+    borderRadius: 5,
     overflow: "visible",
   }),
 
