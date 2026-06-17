@@ -2,7 +2,7 @@
   "name": "kolophon",
   "description": "Inspect, load, and copy any font on any page.",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
