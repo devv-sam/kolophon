@@ -108,7 +108,10 @@ export default defineContentScript({
         label: "Line height",
         kind: "number",
         value: String(
-          round(s.lineHeight === "normal" ? 1.2 : px(s.lineHeight) / fontSize, 2),
+          round(
+            s.lineHeight === "normal" ? 1.2 : px(s.lineHeight) / fontSize,
+            2,
+          ),
         ),
         min: 0.8,
         max: 3,
@@ -119,7 +122,9 @@ export default defineContentScript({
         label: "Letter spacing",
         kind: "length",
         unit: "px",
-        value: String(round(s.letterSpacing === "normal" ? 0 : px(s.letterSpacing), 1)),
+        value: String(
+          round(s.letterSpacing === "normal" ? 0 : px(s.letterSpacing), 1),
+        ),
         min: -5,
         max: 20,
         step: 0.1,
@@ -193,7 +198,15 @@ export default defineContentScript({
           label: "Display",
           kind: "select",
           value: display,
-          options: ["block", "inline", "inline-block", "flex", "inline-flex", "grid", "none"],
+          options: [
+            "block",
+            "inline",
+            "inline-block",
+            "flex",
+            "inline-flex",
+            "grid",
+            "none",
+          ],
         });
       }
       if (isFlexGrid) {
@@ -221,7 +234,14 @@ export default defineContentScript({
           label: "Justify",
           kind: "select",
           value: s.justifyContent,
-          options: ["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"],
+          options: [
+            "flex-start",
+            "center",
+            "flex-end",
+            "space-between",
+            "space-around",
+            "space-evenly",
+          ],
         });
       }
       if (s.textAlign && s.textAlign !== "start" && s.textAlign !== "left") {
@@ -513,6 +533,32 @@ export default defineContentScript({
         html[data-kolophon-dragging],
         html[data-kolophon-dragging] * { cursor: grabbing !important; user-select: none !important; }
         [data-kolophon="exit"] { cursor: pointer !important; }
+
+        /* The popup is injected without a shadow root (so its backdrop-filter
+           can sample real page layers), which also lets the host page's CSS
+           bleed in. Neutralize the decorations pages commonly attach to
+           buttons/icons — ripple ::before/::after pseudo-elements, hover
+           halos, glows — so they don't render as stray circles over our
+           controls. Backgrounds and radii are left alone (the confirm buttons
+           and card need theirs). */
+        [data-kolophon="popup-host"] *::before,
+        [data-kolophon="popup-host"] *::after {
+          content: none !important;
+          display: none !important;
+        }
+        [data-kolophon="popup-host"] button,
+        [data-kolophon="popup-host"] [data-drag],
+        [data-kolophon="popup-host"] svg {
+          box-shadow: none !important;
+          filter: none !important;
+          animation: none !important;
+          transition: none !important;
+        }
+        [data-kolophon="popup-host"] svg {
+          width: revert !important;
+          height: 12;
+          max-width: none !important;
+        }
       `;
       document.documentElement.appendChild(cursorStyle);
       exitButton = buildExitButton();

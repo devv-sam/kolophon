@@ -796,25 +796,18 @@ function ChevronDown() {
 function CopyIcon() {
   return (
     <svg
-      width="13"
-      height="13"
-      viewBox="0 0 11 11"
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
       fill="none"
-      aria-hidden="true"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
     >
-      <path
-        d="M4 4H10V10H4V4Z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M1 7V1H7"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
     </svg>
   );
 }
@@ -840,15 +833,15 @@ function CheckIcon() {
 function ExternalLink() {
   return (
     <svg
-      width="15"
-      height="15"
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
     >
       <path d="M15 3h6v6" />
       <path d="M10 14 21 3" />
@@ -860,15 +853,15 @@ function ExternalLink() {
 function X() {
   return (
     <svg
-      width="15"
-      height="15"
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
     >
       <path d="M18 6 6 18" />
       <path d="m6 6 12 12" />
@@ -879,21 +872,21 @@ function X() {
 function Palette() {
   return (
     <svg
-      width="15"
-      height="15"
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
     >
+      <path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z" />
       <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
       <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
-      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
       <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
-      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2Z" />
+      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
     </svg>
   );
 }
@@ -920,19 +913,22 @@ function ArrowLeft() {
 function GripDots() {
   return (
     <svg
-      width="20"
-      height="9"
-      viewBox="0 0 20 9"
-      fill="currentColor"
-      aria-hidden="true"
-      style={{ pointerEvents: "none" }}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
     >
-      <circle cx="3" cy="2.5" r="1.3" />
-      <circle cx="10" cy="2.5" r="1.3" />
-      <circle cx="17" cy="2.5" r="1.3" />
-      <circle cx="3" cy="6.5" r="1.3" />
-      <circle cx="10" cy="6.5" r="1.3" />
-      <circle cx="17" cy="6.5" r="1.3" />
+      <circle cx="12" cy="9" r="1" />
+      <circle cx="19" cy="9" r="1" />
+      <circle cx="5" cy="9" r="1" />
+      <circle cx="12" cy="15" r="1" />
+      <circle cx="19" cy="15" r="1" />
+      <circle cx="5" cy="15" r="1" />
     </svg>
   );
 }
@@ -961,7 +957,7 @@ const styles = {
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
-    height: 14,
+    height: 12,
     marginBottom: 4,
     color: "rgba(255,255,255,0.28)",
   } as React.CSSProperties,
