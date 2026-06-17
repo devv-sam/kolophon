@@ -1,6 +1,6 @@
 # kolophon
 
-Inspect, load, and copy any font on any page.
+Inspect, copy, and tweak the fonts on any web page. Hover to reveal type, copy CSS, edit live, and save fonts you love.
 
 A Chrome extension for designers and developers. Click the toolbar icon, then
 hover any element to see its typography, click to pin a card, tweak styles live,
