@@ -22,6 +22,14 @@ body,
   margin: 0;
 }
 
+/* Paint the canvas (html) dark, not just the body box. When the panel is
+   opened directly with little content, the body box may not cover the
+   viewport, and Chrome would otherwise show its default white canvas. */
+html {
+  background: var(--bg);
+  color-scheme: dark;
+}
+
 body {
   background: var(--bg);
   color: var(--ink);
@@ -468,6 +476,7 @@ body {
 
 .empty-text {
   margin: 0;
+  max-width: 30ch;
   font-size: 12px;
   line-height: 1.6;
   text-align: center;

@@ -4,8 +4,21 @@ import { PopupCard, type FontData, type EditField } from "./PopupCard";
 
 export default defineContentScript({
   matches: ["<all_urls>"],
+  // Not injected on page load. The background service worker injects this
+  // script into the active tab only when the user clicks the toolbar icon
+  // (see background.ts), so no code runs on pages the user never inspects.
+  registration: "runtime",
 
   main() {
+    // Re-injection (a second toolbar click on the same page) re-runs this file
+    // in the same isolated world, so the previous instance's globals persist.
+    // Toggle the existing instance off instead of stacking a second one.
+    const w = window as unknown as { __kolophon?: { toggle: () => void } };
+    if (w.__kolophon) {
+      w.__kolophon.toggle();
+      return;
+    }
+
     // ─── State ────────────────────────────────────────────────────────────────
 
     let overlay: HTMLDivElement | null = null;
@@ -528,9 +541,9 @@ export default defineContentScript({
       window.removeEventListener("scroll", onScroll);
     }
 
-    browser.runtime.onConnect.addListener((port) => {
-      if (port.name !== "kolophon-inspect") return;
-      enable();
-    });
+    // Expose a toggle for subsequent injections, then turn inspect mode on for
+    // this first one.
+    w.__kolophon = { toggle: () => (active ? disable() : enable()) };
+    enable();
   },
 });

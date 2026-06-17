@@ -542,9 +542,8 @@ function EmptyState() {
     <div className="empty">
       <span className="empty-glyph">Aa</span>
       <p className="empty-text">
-        Inspect an element on the page,
-        <br />
-        then hit expand.
+        No font yet. Click the kolophon icon in your toolbar, then click any
+        text on the page. Hit the expand button on the card to send it here.
       </p>
     </div>
   );
