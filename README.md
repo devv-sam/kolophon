@@ -22,6 +22,8 @@ Built with [WXT](https://wxt.dev) + React 19. Manifest V3.
 
 ## Development
 
+Requires Node 20+ and [pnpm](https://pnpm.io).
+
 ```bash
 pnpm install
 pnpm dev          # launch Chrome with the extension loaded
@@ -39,3 +41,14 @@ pnpm zip          # packaged zip for the Chrome Web Store
 
 The side panel fetches specimen previews from Google Fonts; local and custom
 fonts fall back to a system face.
+
+No data ever leaves your device — see [PRIVACY.md](PRIVACY.md).
+
+## Contributing
+
+Issues and pull requests are welcome. Please run `pnpm compile` before opening a
+PR, and keep changes focused — one concern per PR.
+
+## License
+
+[MIT](LICENSE) © devv-sam

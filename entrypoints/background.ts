@@ -6,15 +6,8 @@ interface PanelState {
 }
 
 export default defineBackground(() => {
-  // Latest inspection the user expanded from. The panel asks for it on load;
-  // if the panel is already open it hears the broadcast instead.
   const state: PanelState = { site: null, font: null };
 
-  // Toolbar click → inject the inspector into the active tab. activeTab grants
-  // the host permission for this gesture, so no broad host permission is needed
-  // and the script never loads on pages the user doesn't inspect. Re-clicking
-  // the same page re-runs the script, which toggles inspect mode off (see the
-  // __kolophon guard in content/index.tsx).
   browser.action.onClicked.addListener((tab) => {
     if (tab.id === undefined) return;
     browser.scripting
@@ -22,7 +15,6 @@ export default defineBackground(() => {
         target: { tabId: tab.id },
         files: ["/content-scripts/content.js"],
       })
-      // Restricted pages (chrome://, the Web Store, PDF viewer) reject injection.
       .catch((err) => console.warn("kolophon: cannot inspect this page", err));
   });
 
@@ -32,7 +24,7 @@ export default defineBackground(() => {
       if (message.font) state.font = message.font;
       browser.runtime
         .sendMessage({ type: "kolophon:state", ...state })
-        .catch(() => {}); // no panel listening yet — fine
+        .catch(() => {});
       const tabId = sender.tab?.id;
       if (tabId === undefined) return;
       // Must be called synchronously here — an await before open() drops the

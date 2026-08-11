@@ -4,6 +4,14 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "license": "MIT",
+  "author": "devv-sam",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/devv-sam/kolophon.git"
+  },
+  "homepage": "https://github.com/devv-sam/kolophon#readme",
+  "bugs": "https://github.com/devv-sam/kolophon/issues",
   "scripts": {
     "dev": "wxt",
     "dev:firefox": "wxt -b firefox",
