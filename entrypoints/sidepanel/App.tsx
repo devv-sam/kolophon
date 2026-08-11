@@ -12,8 +12,6 @@ interface PanelState {
   font: FontData | null;
 }
 
-// Best-effort: try Google Fonts so the specimen renders in the real face.
-// Local/custom fonts 404 silently and the specimen falls back to sans-serif.
 function useGoogleFont(name: string | undefined) {
   useEffect(() => {
     if (!name) return;
@@ -111,11 +109,15 @@ function SpecSheet({ font }: { font: FontData }) {
       </section>
 
       <section className="specimen reveal" style={{ animationDelay: "60ms" }}>
-        <div className="specimen-display" style={{ fontFamily: specimenFamily }}>
+        <div
+          className="specimen-display"
+          style={{ fontFamily: specimenFamily }}
+        >
           Ag
         </div>
         <p className="specimen-alphabet" style={{ fontFamily: specimenFamily }}>
-          AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwYyZz 0123456789@?!(&amp;)
+          AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwYyZz
+          0123456789@?!(&amp;)
         </p>
       </section>
 
@@ -138,8 +140,6 @@ function SpecSheet({ font }: { font: FontData }) {
 
 // ─── Actions ─────────────────────────────────────────────────────────────────
 
-// Same exact spec from the same site = same entry. The same family at a
-// different size/weight/color is intentionally a separate collectable.
 function entryKey(font: FontData, site: SiteInfo | null): string {
   return [
     font.family,
@@ -200,9 +200,7 @@ function AddToCollection({
         const entries = Array.isArray(collection) ? collection : [];
         // Re-check inside the write in case another panel added it meanwhile
         if (
-          entries.some(
-            (e: CollectionEntry) => entryKey(e.font, e.site) === key,
-          )
+          entries.some((e: CollectionEntry) => entryKey(e.font, e.site) === key)
         ) {
           return;
         }
@@ -365,7 +363,10 @@ function CollectionItem({
           <span className="coll-name">{font.name}</span>
           <span className="coll-meta">
             {font.weight} · {font.size} ·
-            <span className="color-chip" style={{ background: font.colorRgb }} />
+            <span
+              className="color-chip"
+              style={{ background: font.colorRgb }}
+            />
             {font.colorHex}
           </span>
         </div>

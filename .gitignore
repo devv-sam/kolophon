@@ -9,6 +9,11 @@ lerna-debug.log*
 
 node_modules
 .output
+
+# pnpm is the package manager for this project
+package-lock.json
+yarn.lock
+
 stats.html
 stats-*.json
 .wxt
