@@ -291,8 +291,8 @@ export default defineContentScript({
 
     let toolbarPosition: "bottom" | "top" = "bottom";
     const TOOLBAR_EDGE = 24;
-    const SNAP_EASE = "cubic-bezier(0.4, 0, 0.15, 1)";
-    const SNAP_DURATION = "0.35s";
+    const SNAP_EASE = "linear";
+    const SNAP_DURATION = "0.3s";
 
     function snapTop(bar: HTMLDivElement): number {
       return toolbarPosition === "top"
@@ -306,7 +306,8 @@ export default defineContentScript({
       Object.assign(bar.style, {
         position: "fixed",
         left: "50%",
-        transform: "translateX(-50%)",
+        transform: "translateX(-50%) scale(0.92)",
+        transformOrigin: "center center",
         zIndex: "2147483646",
         display: "flex",
         alignItems: "center",
@@ -320,11 +321,8 @@ export default defineContentScript({
         fontWeight: "500",
         lineHeight: "1",
         userSelect: "none",
-        top: `${window.innerHeight - 48 - TOOLBAR_EDGE}px`,
-        transition: `top ${SNAP_DURATION} ${SNAP_EASE}`,
-      });
-      requestAnimationFrame(() => {
-        bar.style.top = `${snapTop(bar)}px`;
+        opacity: "0",
+        transition: "none",
       });
 
       const grip = document.createElement("div");
@@ -372,16 +370,19 @@ export default defineContentScript({
           window.removeEventListener("mousemove", onMove);
           window.removeEventListener("mouseup", onUp);
 
-          const barMidY = bar.getBoundingClientRect().top + bar.offsetHeight / 2;
+          const barMidY =
+            bar.getBoundingClientRect().top + bar.offsetHeight / 2;
           const vpMid = window.innerHeight / 2;
           toolbarPosition = barMidY < vpMid ? "top" : "bottom";
 
           bar.style.transition = `top ${SNAP_DURATION} ${SNAP_EASE}, left ${SNAP_DURATION} ${SNAP_EASE}, transform ${SNAP_DURATION} ${SNAP_EASE}`;
           bar.style.top = `${snapTop(bar)}px`;
           bar.style.left = "50%";
-          bar.style.transform = "translateX(-50%)";
+          bar.style.transform = "translateX(-50%) scale(1)";
 
-          setTimeout(() => { draggingToolbar = false; }, 50);
+          setTimeout(() => {
+            draggingToolbar = false;
+          }, 50);
         }
 
         window.addEventListener("mousemove", onMove);
@@ -412,7 +413,40 @@ export default defineContentScript({
         },
       ];
 
+      const modeGroup = document.createElement("div");
+      modeGroup.setAttribute("data-kolophon", "toolbar-modes");
+      Object.assign(modeGroup.style, {
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        padding: "0 5px",
+        position: "relative",
+      });
+
+      const highlight = document.createElement("div");
+      highlight.setAttribute("data-kolophon", "toolbar-highlight");
+      Object.assign(highlight.style, {
+        position: "absolute",
+        top: "0",
+        left: "0",
+        height: "100%",
+        borderRadius: "6px",
+        background: "rgba(0,0,0,0.06)",
+        transition: "left 0.25s linear, width 0.25s linear",
+        pointerEvents: "none",
+      });
+      modeGroup.appendChild(highlight);
+
       const buttons: HTMLButtonElement[] = [];
+
+      function moveHighlight() {
+        const activeBtn = buttons.find(
+          (b) => b.getAttribute("data-mode") === activeMode,
+        );
+        if (!activeBtn) return;
+        highlight.style.left = `${activeBtn.offsetLeft}px`;
+        highlight.style.width = `${activeBtn.offsetWidth}px`;
+      }
 
       for (const mode of modes) {
         const btn = document.createElement("button");
@@ -426,8 +460,7 @@ export default defineContentScript({
           padding: "7px 5px",
           border: "none",
           borderRadius: "6px",
-          background:
-            mode.id === activeMode ? "rgba(0,0,0,0.06)" : "transparent",
+          background: "transparent",
           color: "#000000",
           fontFamily: "inherit",
           fontSize: "14px",
@@ -435,20 +468,26 @@ export default defineContentScript({
           lineHeight: "1",
           cursor: "pointer",
           whiteSpace: "nowrap",
+          position: "relative",
         });
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
           activeMode = mode.id;
-          for (const b of buttons) {
-            b.style.background =
-              b.getAttribute("data-mode") === activeMode
-                ? "rgba(0,0,0,0.06)"
-                : "transparent";
-          }
+          moveHighlight();
         });
         buttons.push(btn);
-        bar.appendChild(btn);
+        modeGroup.appendChild(btn);
       }
+      bar.appendChild(modeGroup);
+
+      requestAnimationFrame(() => {
+        highlight.style.transition = "none";
+        moveHighlight();
+        requestAnimationFrame(() => {
+          highlight.style.transition =
+            "left 0.25s linear, width 0.25s linear";
+        });
+      });
 
       const divider = document.createElement("div");
       divider.setAttribute("data-kolophon", "toolbar-divider");
@@ -704,6 +743,13 @@ export default defineContentScript({
       document.documentElement.appendChild(cursorStyle);
       toolbar = buildToolbar();
       document.body.appendChild(toolbar);
+      toolbar.style.top = `${snapTop(toolbar)}px`;
+      requestAnimationFrame(() => {
+        if (!toolbar) return;
+        toolbar.style.transition = `top ${SNAP_DURATION} ${SNAP_EASE}, opacity 0.2s linear, transform 0.2s linear`;
+        toolbar.style.opacity = "1";
+        toolbar.style.transform = "translateX(-50%) scale(1)";
+      });
       document.addEventListener("mouseover", onMouseOver);
       document.addEventListener("mouseleave", hide);
       document.addEventListener("click", onClick);
@@ -719,13 +765,23 @@ export default defineContentScript({
       hide();
       cursorStyle?.remove();
       cursorStyle = null;
-      toolbar?.remove();
-      toolbar = null;
       document.removeEventListener("mouseover", onMouseOver);
       document.removeEventListener("click", onClick);
       document.removeEventListener("mouseleave", hide);
       document.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("scroll", onScroll);
+
+      if (toolbar) {
+        const bar = toolbar;
+        toolbar = null;
+        bar.style.transition = "opacity 0.2s linear, transform 0.2s linear";
+        bar.style.opacity = "0";
+        bar.style.transform = "translateX(-50%) scale(0.92)";
+        bar.addEventListener("transitionend", () => bar.remove(), {
+          once: true,
+        });
+        setTimeout(() => bar.remove(), 250);
+      }
     }
 
     w.__kolophon = { toggle: () => (active ? disable() : enable()) };
