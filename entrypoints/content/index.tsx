@@ -4,48 +4,40 @@ import { PopupCard, type FontData, type EditField } from "./PopupCard";
 
 export default defineContentScript({
   matches: ["<all_urls>"],
-  // Not injected on page load. The background service worker injects this
-  // script into the active tab only when the user clicks the toolbar icon
-  // (see background.ts), so no code runs on pages the user never inspects.
+
   registration: "runtime",
 
   main() {
-    // Re-injection (a second toolbar click on the same page) re-runs this file
-    // in the same isolated world, so the previous instance's globals persist.
-    // Toggle the existing instance off instead of stacking a second one.
     const w = window as unknown as { __kolophon?: { toggle: () => void } };
     if (w.__kolophon) {
       w.__kolophon.toggle();
       return;
     }
 
-    // ─── State ────────────────────────────────────────────────────────────────
-
     let overlay: HTMLDivElement | null = null;
     let badge: HTMLDivElement | null = null;
-    let exitButton: HTMLButtonElement | null = null;
+    let toolbar: HTMLDivElement | null = null;
     let cursorStyle: HTMLStyleElement | null = null;
     let activeTarget: Element | null = null;
     let active = false;
     let popupOpen = false;
+    let activeMode: "inspect" | "edit" | "collection" = "inspect";
+    let draggingToolbar = false;
 
     let reactRoot: Root | null = null;
-    // The element the popup is currently describing. Held so the edit view can
-    // mutate its inline styles in real time (popupState.data is only a snapshot).
     let popupTarget: Element | null = null;
-    // Every element we've live-edited → its original inline cssText, so edits
-    // can be fully reverted if the user discards on quit.
     const editedStyles = new Map<HTMLElement, string>();
+    let toolbarFullContent: HTMLElement | null = null;
+    let toolbarCollapsedContent: HTMLElement | null = null;
     let popupState = {
       data: null as FontData | null,
       editFields: [] as EditField[],
       x: 0,
       y: 0,
+      anchorBottom: false,
       visible: false,
       confirmDiscard: false,
     };
-
-    // ─── Helpers ──────────────────────────────────────────────────────────────
 
     function parseFontName(fontFamily: string): string {
       return fontFamily.split(",")[0].trim().replace(/['"]/g, "");
@@ -62,12 +54,6 @@ export default defineContentScript({
           .join("")
       );
     }
-
-    // ─── Contextual edit fields ───────────────────────────────────────────────
-    // The edit view only shows properties that are actually meaningful on the
-    // clicked element: typography is always relevant for a font tool, the rest
-    // appear only when set (a flex container gets gap/align, a card gets radius,
-    // etc.). Mirrors how the element is really styled rather than a fixed form.
 
     function px(v: string): number {
       const n = parseFloat(v);
@@ -92,7 +78,6 @@ export default defineContentScript({
       const fields: EditField[] = [];
       const fontSize = px(s.fontSize) || 16;
 
-      // Typography — always relevant
       fields.push({
         prop: "font-size",
         label: "Size",
@@ -145,7 +130,6 @@ export default defineContentScript({
         value: rgbToHex(s.color),
       });
 
-      // Contextual — only when set on this element
       if (!isTransparent(s.backgroundColor)) {
         fields.push({
           prop: "background-color",
@@ -273,8 +257,6 @@ export default defineContentScript({
       };
     }
 
-    // ─── Builders ─────────────────────────────────────────────────────────────
-
     function buildOverlay(): HTMLDivElement {
       const el = document.createElement("div");
       el.setAttribute("data-kolophon", "overlay");
@@ -310,43 +292,313 @@ export default defineContentScript({
       return el;
     }
 
-    function buildExitButton(): HTMLButtonElement {
-      const el = document.createElement("button");
-      el.setAttribute("data-kolophon", "exit");
-      el.textContent = "Exit Kolophon";
-      Object.assign(el.style, {
+    let toolbarPosition: "bottom" | "top" = "bottom";
+    const TOOLBAR_EDGE = 24;
+    const SNAP_EASE = "linear";
+    const SNAP_DURATION = "0.3s";
+
+    function snapTop(bar: HTMLDivElement): number {
+      return toolbarPosition === "top"
+        ? TOOLBAR_EDGE
+        : window.innerHeight - bar.offsetHeight - TOOLBAR_EDGE;
+    }
+
+    function buildToolbar(): HTMLDivElement {
+      const bar = document.createElement("div");
+      bar.setAttribute("data-kolophon", "toolbar");
+      Object.assign(bar.style, {
         position: "fixed",
-        top: "16px",
-        right: "16px",
+        left: "50%",
+        transform: "translateX(-50%) scale(0.92)",
+        transformOrigin: "center center",
         zIndex: "2147483646",
-        background: "rgba(20, 20, 22, 0.55)",
-        backdropFilter: "blur(16px) saturate(1.4)",
-        WebkitBackdropFilter: "blur(16px) saturate(1.4)",
-        border: "1px solid rgba(255,255,255,0.10)",
-        color: "#ffffff",
-        borderRadius: "5px",
-        padding: "10px 16px",
+        display: "flex",
+        alignItems: "center",
+        gap: "0",
+        background: "#ffffff",
+        borderRadius: "7px",
+        padding: "6px",
+        boxShadow: "0 4px 24px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.06)",
         fontFamily: "system-ui, -apple-system, sans-serif",
         fontSize: "14px",
         fontWeight: "500",
         lineHeight: "1",
-        letterSpacing: "0.01em",
-        cursor: "pointer",
+        userSelect: "none",
+        opacity: "0",
+        transition: "none",
       });
-      el.addEventListener("click", (e) => {
+
+      const modeIcons: Record<string, string> = {
+        inspect: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg>',
+        edit: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>',
+        collection: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z"/></svg>',
+      };
+
+      // ── Full toolbar content ──
+      const fullWrap = document.createElement("div");
+      fullWrap.setAttribute("data-kolophon", "toolbar-full");
+      Object.assign(fullWrap.style, { display: "flex", alignItems: "center" });
+
+      const grip = document.createElement("div");
+      grip.setAttribute("data-kolophon", "toolbar-grip");
+      grip.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>';
+      Object.assign(grip.style, {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "7px 3px",
+        color: "rgba(0,0,0,0.3)",
+        cursor: "grab",
+        lineHeight: "0",
+        flexShrink: "0",
+      });
+
+      let dragStartX = 0;
+      let dragStartY = 0;
+      let barStartTop = 0;
+      let barStartLeft = 0;
+
+      grip.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        draggingToolbar = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        const rect = bar.getBoundingClientRect();
+        barStartTop = rect.top;
+        barStartLeft = rect.left;
+        grip.style.cursor = "grabbing";
+        bar.style.transition = "none";
+        bar.style.transform = "none";
+        bar.style.left = `${barStartLeft}px`;
+        hide();
+
+        function onMove(ev: MouseEvent) {
+          bar.style.top = `${barStartTop + (ev.clientY - dragStartY)}px`;
+          bar.style.left = `${barStartLeft + (ev.clientX - dragStartX)}px`;
+        }
+
+        function onUp() {
+          grip.style.cursor = "grab";
+          window.removeEventListener("mousemove", onMove);
+          window.removeEventListener("mouseup", onUp);
+
+          const barMidY =
+            bar.getBoundingClientRect().top + bar.offsetHeight / 2;
+          const vpMid = window.innerHeight / 2;
+          toolbarPosition = barMidY < vpMid ? "top" : "bottom";
+
+          bar.style.transition = `top ${SNAP_DURATION} ${SNAP_EASE}, left ${SNAP_DURATION} ${SNAP_EASE}, transform ${SNAP_DURATION} ${SNAP_EASE}`;
+          bar.style.top = `${snapTop(bar)}px`;
+          bar.style.left = "50%";
+          bar.style.transform = "translateX(-50%) scale(1)";
+
+          setTimeout(() => {
+            draggingToolbar = false;
+          }, 50);
+        }
+
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+      });
+
+      fullWrap.appendChild(grip);
+
+      const modes: {
+        id: "inspect" | "edit" | "collection";
+        label: string;
+        icon: string;
+      }[] = [
+        { id: "inspect", label: "Inspect", icon: modeIcons.inspect },
+        { id: "edit", label: "Edit", icon: modeIcons.edit },
+        { id: "collection", label: "Collection", icon: modeIcons.collection },
+      ];
+
+      const modeGroup = document.createElement("div");
+      modeGroup.setAttribute("data-kolophon", "toolbar-modes");
+      Object.assign(modeGroup.style, {
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        padding: "0 5px",
+        position: "relative",
+      });
+
+      const highlight = document.createElement("div");
+      highlight.setAttribute("data-kolophon", "toolbar-highlight");
+      Object.assign(highlight.style, {
+        position: "absolute",
+        top: "0",
+        left: "0",
+        height: "100%",
+        borderRadius: "6px",
+        background: "rgba(0,0,0,0.06)",
+        transition: "left 0.25s linear, width 0.25s linear",
+        pointerEvents: "none",
+      });
+      modeGroup.appendChild(highlight);
+
+      const buttons: HTMLButtonElement[] = [];
+
+      function moveHighlight() {
+        const activeBtn = buttons.find(
+          (b) => b.getAttribute("data-mode") === activeMode,
+        );
+        if (!activeBtn) return;
+        highlight.style.left = `${activeBtn.offsetLeft}px`;
+        highlight.style.width = `${activeBtn.offsetWidth}px`;
+      }
+
+      for (const mode of modes) {
+        const btn = document.createElement("button");
+        btn.setAttribute("data-kolophon", "toolbar-btn");
+        btn.setAttribute("data-mode", mode.id);
+        btn.innerHTML = `${mode.icon}<span>${mode.label}</span>`;
+        Object.assign(btn.style, {
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          padding: "7px 5px",
+          border: "none",
+          borderRadius: "6px",
+          background: "transparent",
+          color: "#000000",
+          fontFamily: "inherit",
+          fontSize: "14px",
+          fontWeight: "500",
+          lineHeight: "1",
+          cursor: "pointer",
+          whiteSpace: "nowrap",
+          position: "relative",
+        });
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          activeMode = mode.id;
+          moveHighlight();
+        });
+        buttons.push(btn);
+        modeGroup.appendChild(btn);
+      }
+      fullWrap.appendChild(modeGroup);
+
+      requestAnimationFrame(() => {
+        highlight.style.transition = "none";
+        moveHighlight();
+        requestAnimationFrame(() => {
+          highlight.style.transition =
+            "left 0.25s linear, width 0.25s linear";
+        });
+      });
+
+      const divider = document.createElement("div");
+      Object.assign(divider.style, {
+        width: "1px",
+        height: "16px",
+        background: "rgba(0,0,0,0.12)",
+        margin: "0 4px",
+        flexShrink: "0",
+      });
+      fullWrap.appendChild(divider);
+
+      const closeBtn = document.createElement("button");
+      closeBtn.setAttribute("data-kolophon", "toolbar-close");
+      closeBtn.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+      Object.assign(closeBtn.style, {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "7px 5px",
+        border: "none",
+        borderRadius: "6px",
+        background: "transparent",
+        color: "#000000",
+        cursor: "pointer",
+        lineHeight: "0",
+      });
+      closeBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         disable();
       });
-      return el;
+      fullWrap.appendChild(closeBtn);
+      bar.appendChild(fullWrap);
+      toolbarFullContent = fullWrap;
+
+      // ── Collapsed toolbar content (shown when popup is open) ──
+      const collapsedWrap = document.createElement("div");
+      collapsedWrap.setAttribute("data-kolophon", "toolbar-collapsed");
+      Object.assign(collapsedWrap.style, {
+        display: "none",
+        alignItems: "center",
+        width: "100%",
+      });
+
+      const modeIcon = document.createElement("div");
+      modeIcon.setAttribute("data-kolophon", "toolbar-mode-icon");
+      modeIcon.innerHTML = modeIcons[activeMode];
+      Object.assign(modeIcon.style, {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "7px 8px",
+        color: "#000000",
+        lineHeight: "0",
+      });
+      collapsedWrap.appendChild(modeIcon);
+
+      const spacer = document.createElement("div");
+      Object.assign(spacer.style, { flex: "1" });
+      collapsedWrap.appendChild(spacer);
+
+      const collapsedDivider = document.createElement("div");
+      Object.assign(collapsedDivider.style, {
+        width: "1px",
+        height: "16px",
+        background: "rgba(0,0,0,0.12)",
+        margin: "0 4px",
+        flexShrink: "0",
+      });
+      collapsedWrap.appendChild(collapsedDivider);
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.setAttribute("data-kolophon", "toolbar-cancel");
+      cancelBtn.textContent = "Cancel";
+      Object.assign(cancelBtn.style, {
+        display: "flex",
+        alignItems: "center",
+        padding: "7px 12px",
+        border: "none",
+        borderRadius: "6px",
+        background: "transparent",
+        color: "#000000",
+        fontFamily: "inherit",
+        fontSize: "14px",
+        fontWeight: "500",
+        lineHeight: "1",
+        cursor: "pointer",
+        transition: "background 0.15s linear",
+      });
+      cancelBtn.addEventListener("mouseenter", () => {
+        cancelBtn.style.background = "rgba(0,0,0,0.04)";
+      });
+      cancelBtn.addEventListener("mouseleave", () => {
+        cancelBtn.style.background = "transparent";
+      });
+      cancelBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closePopup();
+      });
+      collapsedWrap.appendChild(cancelBtn);
+      bar.appendChild(collapsedWrap);
+      toolbarCollapsedContent = collapsedWrap;
+
+      return bar;
     }
 
     function mountReact() {
       const container = document.createElement("div");
       container.setAttribute("data-kolophon", "popup-host");
-      // No shadow DOM — a position:fixed shadow host gets its own GPU compositing
-      // layer, which means backdrop-filter on children only sees that layer
-      // (transparent), not the actual page content behind it.
-      // Direct injection lets the popup card's backdrop-filter sample real page layers.
       Object.assign(container.style, { pointerEvents: "none" });
       document.body.appendChild(container);
       reactRoot = createRoot(container);
@@ -360,10 +612,6 @@ export default defineContentScript({
       mountReact();
     }
 
-    // ─── Popup rendering ──────────────────────────────────────────────────────
-    // Re-render the React component whenever popupState changes.
-    // React diffs and only updates what actually changed.
-
     function syncPopup() {
       reactRoot?.render(
         <PopupCard
@@ -371,6 +619,7 @@ export default defineContentScript({
           editFields={popupState.editFields}
           x={popupState.x}
           y={popupState.y}
+          anchorBottom={popupState.anchorBottom}
           visible={popupState.visible}
           confirmDiscard={popupState.confirmDiscard}
           onClose={closePopup}
@@ -381,31 +630,24 @@ export default defineContentScript({
       );
     }
 
-    // Live-edit the inspected element's inline styles from the edit view, then
-    // keep the highlight overlay glued to it as its box changes.
     function applyStyle(prop: string, value: string) {
       if (!popupTarget) return;
       const el = popupTarget as HTMLElement;
-      // Snapshot the untouched inline style the first time we edit this element.
       if (!editedStyles.has(el)) editedStyles.set(el, el.style.cssText);
       el.style.setProperty(prop, value);
       track(popupTarget);
     }
 
-    // Yes → roll every edited element back to its original inline style, then quit.
     function discardEdits() {
       for (const [el, css] of editedStyles) el.style.cssText = css;
       editedStyles.clear();
       disable();
     }
 
-    // No → dismiss the prompt and keep editing.
     function cancelDiscard() {
       popupState = { ...popupState, confirmDiscard: false };
       syncPopup();
     }
-
-    // ─── Tracking ─────────────────────────────────────────────────────────────
 
     function track(target: Element) {
       if (!overlay || !badge) return;
@@ -438,13 +680,10 @@ export default defineContentScript({
       activeTarget = null;
     }
 
-    // ─── Event handlers ───────────────────────────────────────────────────────
-
     function onMouseOver(e: MouseEvent) {
+      if (draggingToolbar || popupOpen) return;
       const target = e.target as Element;
       if (!(target instanceof Element)) return;
-      // closest() walks ancestors, so we skip anything inside our popup host —
-      // not just elements that directly carry the data attribute.
       if (target.closest("[data-kolophon]")) return;
       activeTarget = target;
       track(target);
@@ -456,16 +695,24 @@ export default defineContentScript({
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
-      // Already asking — wait for an explicit No/Yes rather than quitting.
-      if (popupState.confirmDiscard) return;
-      // Unsaved edits → surface the discard prompt in the card instead of quitting.
-      if (editedStyles.size > 0) {
-        popupOpen = true;
-        popupState = { ...popupState, visible: true, confirmDiscard: true };
-        syncPopup();
+      if (popupOpen) {
+        closePopup();
         return;
       }
       disable();
+    }
+
+    function setToolbarMode(mode: "full" | "collapsed") {
+      if (!toolbarFullContent || !toolbarCollapsedContent || !toolbar) return;
+      if (mode === "collapsed") {
+        toolbar.style.minWidth = `${toolbar.offsetWidth}px`;
+        toolbarFullContent.style.display = "none";
+        toolbarCollapsedContent.style.display = "flex";
+      } else {
+        toolbar.style.minWidth = "";
+        toolbarCollapsedContent.style.display = "none";
+        toolbarFullContent.style.display = "flex";
+      }
     }
 
     function closePopup() {
@@ -473,9 +720,11 @@ export default defineContentScript({
       popupTarget = null;
       popupState = { ...popupState, visible: false, confirmDiscard: false };
       syncPopup();
+      setToolbarMode("full");
     }
 
     function onClick(e: MouseEvent) {
+      if (draggingToolbar) return;
       const target = e.target as Element;
       if (!(target instanceof Element)) return;
       if (target.closest("[data-kolophon]")) return;
@@ -486,21 +735,39 @@ export default defineContentScript({
       popupOpen = true;
       popupTarget = target;
 
-      const x = Math.min(e.clientX + 12, window.innerWidth - 300);
-      const y = Math.min(e.clientY + 12, window.innerHeight - 300);
+      const POPUP_GAP = 12;
+      let popupY: number;
+      let anchorBottom = false;
+      if (toolbar) {
+        const barRect = toolbar.getBoundingClientRect();
+        if (toolbarPosition === "bottom") {
+          anchorBottom = true;
+          popupY = window.innerHeight - barRect.top + POPUP_GAP;
+        } else {
+          popupY = barRect.bottom + POPUP_GAP;
+        }
+      } else {
+        popupY = window.innerHeight / 2 - 110;
+      }
+
+      const fontData = readFontData(target);
+
+      navigator.clipboard.writeText(fontData.family).catch(() => {});
 
       popupState = {
-        data: readFontData(target),
+        data: fontData,
         editFields: buildEditFields(target),
-        x,
-        y,
+        x: 0,
+        y: popupY,
+        anchorBottom,
         visible: true,
         confirmDiscard: false,
       };
+      if (overlay) overlay.style.display = "none";
+      if (badge) badge.style.display = "none";
       syncPopup();
+      setToolbarMode("collapsed");
     }
-
-    // ─── Enable / disable ─────────────────────────────────────────────────────
 
     function enable() {
       if (active) return;
@@ -532,15 +799,32 @@ export default defineContentScript({
         [data-kolophon="popup-host"] [data-drag] { cursor: grab !important; }
         html[data-kolophon-dragging],
         html[data-kolophon-dragging] * { cursor: grabbing !important; user-select: none !important; }
-        [data-kolophon="exit"] { cursor: pointer !important; }
+        [data-kolophon="toolbar"],
+        [data-kolophon="toolbar"] * { cursor: default !important; }
+        [data-kolophon="toolbar-btn"],
+        [data-kolophon="toolbar-close"],
+        [data-kolophon="toolbar-cancel"] { cursor: pointer !important; }
+        [data-kolophon="toolbar-grip"] { cursor: grab !important; }
+        [data-kolophon="toolbar-grip"]:active { cursor: grabbing !important; }
 
-        /* The popup is injected without a shadow root (so its backdrop-filter
-           can sample real page layers), which also lets the host page's CSS
-           bleed in. Neutralize the decorations pages commonly attach to
-           buttons/icons — ripple ::before/::after pseudo-elements, hover
-           halos, glows — so they don't render as stray circles over our
-           controls. Backgrounds and radii are left alone (the confirm buttons
-           and card need theirs). */
+        [data-kolophon="toolbar"] *::before,
+        [data-kolophon="toolbar"] *::after {
+          content: none !important;
+          display: none !important;
+        }
+        [data-kolophon="toolbar"] button,
+        [data-kolophon="toolbar"] svg {
+          box-shadow: none !important;
+          filter: none !important;
+          animation: none !important;
+          transition: none !important;
+        }
+        [data-kolophon="toolbar"] svg {
+          width: revert !important;
+          height: revert !important;
+          max-width: none !important;
+        }
+
         [data-kolophon="popup-host"] *::before,
         [data-kolophon="popup-host"] *::after {
           content: none !important;
@@ -561,8 +845,15 @@ export default defineContentScript({
         }
       `;
       document.documentElement.appendChild(cursorStyle);
-      exitButton = buildExitButton();
-      document.body.appendChild(exitButton);
+      toolbar = buildToolbar();
+      document.body.appendChild(toolbar);
+      toolbar.style.top = `${snapTop(toolbar)}px`;
+      requestAnimationFrame(() => {
+        if (!toolbar) return;
+        toolbar.style.transition = `top ${SNAP_DURATION} ${SNAP_EASE}, opacity 0.2s linear, transform 0.2s linear`;
+        toolbar.style.opacity = "1";
+        toolbar.style.transform = "translateX(-50%) scale(1)";
+      });
       document.addEventListener("mouseover", onMouseOver);
       document.addEventListener("mouseleave", hide);
       document.addEventListener("click", onClick);
@@ -574,21 +865,31 @@ export default defineContentScript({
       active = false;
       popupOpen = false;
       editedStyles.clear();
-      popupState = { ...popupState, confirmDiscard: false };
+      popupState = { ...popupState, visible: false, confirmDiscard: false };
+      syncPopup();
+      setToolbarMode("full");
       hide();
       cursorStyle?.remove();
       cursorStyle = null;
-      exitButton?.remove();
-      exitButton = null;
       document.removeEventListener("mouseover", onMouseOver);
       document.removeEventListener("click", onClick);
       document.removeEventListener("mouseleave", hide);
       document.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("scroll", onScroll);
+
+      if (toolbar) {
+        const bar = toolbar;
+        toolbar = null;
+        bar.style.transition = "opacity 0.2s linear, transform 0.2s linear";
+        bar.style.opacity = "0";
+        bar.style.transform = "translateX(-50%) scale(0.92)";
+        bar.addEventListener("transitionend", () => bar.remove(), {
+          once: true,
+        });
+        setTimeout(() => bar.remove(), 250);
+      }
     }
 
-    // Expose a toggle for subsequent injections, then turn inspect mode on for
-    // this first one.
     w.__kolophon = { toggle: () => (active ? disable() : enable()) };
     enable();
   },
