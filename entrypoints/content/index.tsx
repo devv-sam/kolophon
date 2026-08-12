@@ -27,11 +27,14 @@ export default defineContentScript({
     let reactRoot: Root | null = null;
     let popupTarget: Element | null = null;
     const editedStyles = new Map<HTMLElement, string>();
+    let toolbarFullContent: HTMLElement | null = null;
+    let toolbarCollapsedContent: HTMLElement | null = null;
     let popupState = {
       data: null as FontData | null,
       editFields: [] as EditField[],
       x: 0,
       y: 0,
+      anchorBottom: false,
       visible: false,
       confirmDiscard: false,
     };
@@ -325,6 +328,17 @@ export default defineContentScript({
         transition: "none",
       });
 
+      const modeIcons: Record<string, string> = {
+        inspect: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg>',
+        edit: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>',
+        collection: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z"/></svg>',
+      };
+
+      // ── Full toolbar content ──
+      const fullWrap = document.createElement("div");
+      fullWrap.setAttribute("data-kolophon", "toolbar-full");
+      Object.assign(fullWrap.style, { display: "flex", alignItems: "center" });
+
       const grip = document.createElement("div");
       grip.setAttribute("data-kolophon", "toolbar-grip");
       grip.innerHTML =
@@ -389,28 +403,16 @@ export default defineContentScript({
         window.addEventListener("mouseup", onUp);
       });
 
-      bar.appendChild(grip);
+      fullWrap.appendChild(grip);
 
       const modes: {
         id: "inspect" | "edit" | "collection";
         label: string;
         icon: string;
       }[] = [
-        {
-          id: "inspect",
-          label: "Inspect",
-          icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg>',
-        },
-        {
-          id: "edit",
-          label: "Edit",
-          icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>',
-        },
-        {
-          id: "collection",
-          label: "Collection",
-          icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z"/></svg>',
-        },
+        { id: "inspect", label: "Inspect", icon: modeIcons.inspect },
+        { id: "edit", label: "Edit", icon: modeIcons.edit },
+        { id: "collection", label: "Collection", icon: modeIcons.collection },
       ];
 
       const modeGroup = document.createElement("div");
@@ -478,7 +480,7 @@ export default defineContentScript({
         buttons.push(btn);
         modeGroup.appendChild(btn);
       }
-      bar.appendChild(modeGroup);
+      fullWrap.appendChild(modeGroup);
 
       requestAnimationFrame(() => {
         highlight.style.transition = "none";
@@ -490,7 +492,6 @@ export default defineContentScript({
       });
 
       const divider = document.createElement("div");
-      divider.setAttribute("data-kolophon", "toolbar-divider");
       Object.assign(divider.style, {
         width: "1px",
         height: "16px",
@@ -498,7 +499,7 @@ export default defineContentScript({
         margin: "0 4px",
         flexShrink: "0",
       });
-      bar.appendChild(divider);
+      fullWrap.appendChild(divider);
 
       const closeBtn = document.createElement("button");
       closeBtn.setAttribute("data-kolophon", "toolbar-close");
@@ -520,7 +521,77 @@ export default defineContentScript({
         e.stopPropagation();
         disable();
       });
-      bar.appendChild(closeBtn);
+      fullWrap.appendChild(closeBtn);
+      bar.appendChild(fullWrap);
+      toolbarFullContent = fullWrap;
+
+      // ── Collapsed toolbar content (shown when popup is open) ──
+      const collapsedWrap = document.createElement("div");
+      collapsedWrap.setAttribute("data-kolophon", "toolbar-collapsed");
+      Object.assign(collapsedWrap.style, {
+        display: "none",
+        alignItems: "center",
+        width: "100%",
+      });
+
+      const modeIcon = document.createElement("div");
+      modeIcon.setAttribute("data-kolophon", "toolbar-mode-icon");
+      modeIcon.innerHTML = modeIcons[activeMode];
+      Object.assign(modeIcon.style, {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "7px 8px",
+        color: "#000000",
+        lineHeight: "0",
+      });
+      collapsedWrap.appendChild(modeIcon);
+
+      const spacer = document.createElement("div");
+      Object.assign(spacer.style, { flex: "1" });
+      collapsedWrap.appendChild(spacer);
+
+      const collapsedDivider = document.createElement("div");
+      Object.assign(collapsedDivider.style, {
+        width: "1px",
+        height: "16px",
+        background: "rgba(0,0,0,0.12)",
+        margin: "0 4px",
+        flexShrink: "0",
+      });
+      collapsedWrap.appendChild(collapsedDivider);
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.setAttribute("data-kolophon", "toolbar-cancel");
+      cancelBtn.textContent = "Cancel";
+      Object.assign(cancelBtn.style, {
+        display: "flex",
+        alignItems: "center",
+        padding: "7px 12px",
+        border: "none",
+        borderRadius: "6px",
+        background: "transparent",
+        color: "#000000",
+        fontFamily: "inherit",
+        fontSize: "14px",
+        fontWeight: "500",
+        lineHeight: "1",
+        cursor: "pointer",
+        transition: "background 0.15s linear",
+      });
+      cancelBtn.addEventListener("mouseenter", () => {
+        cancelBtn.style.background = "rgba(0,0,0,0.04)";
+      });
+      cancelBtn.addEventListener("mouseleave", () => {
+        cancelBtn.style.background = "transparent";
+      });
+      cancelBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closePopup();
+      });
+      collapsedWrap.appendChild(cancelBtn);
+      bar.appendChild(collapsedWrap);
+      toolbarCollapsedContent = collapsedWrap;
 
       return bar;
     }
@@ -548,6 +619,7 @@ export default defineContentScript({
           editFields={popupState.editFields}
           x={popupState.x}
           y={popupState.y}
+          anchorBottom={popupState.anchorBottom}
           visible={popupState.visible}
           confirmDiscard={popupState.confirmDiscard}
           onClose={closePopup}
@@ -609,7 +681,7 @@ export default defineContentScript({
     }
 
     function onMouseOver(e: MouseEvent) {
-      if (draggingToolbar) return;
+      if (draggingToolbar || popupOpen) return;
       const target = e.target as Element;
       if (!(target instanceof Element)) return;
       if (target.closest("[data-kolophon]")) return;
@@ -623,14 +695,24 @@ export default defineContentScript({
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
-      if (popupState.confirmDiscard) return;
-      if (editedStyles.size > 0) {
-        popupOpen = true;
-        popupState = { ...popupState, visible: true, confirmDiscard: true };
-        syncPopup();
+      if (popupOpen) {
+        closePopup();
         return;
       }
       disable();
+    }
+
+    function setToolbarMode(mode: "full" | "collapsed") {
+      if (!toolbarFullContent || !toolbarCollapsedContent || !toolbar) return;
+      if (mode === "collapsed") {
+        toolbar.style.minWidth = `${toolbar.offsetWidth}px`;
+        toolbarFullContent.style.display = "none";
+        toolbarCollapsedContent.style.display = "flex";
+      } else {
+        toolbar.style.minWidth = "";
+        toolbarCollapsedContent.style.display = "none";
+        toolbarFullContent.style.display = "flex";
+      }
     }
 
     function closePopup() {
@@ -638,6 +720,7 @@ export default defineContentScript({
       popupTarget = null;
       popupState = { ...popupState, visible: false, confirmDiscard: false };
       syncPopup();
+      setToolbarMode("full");
     }
 
     function onClick(e: MouseEvent) {
@@ -652,18 +735,38 @@ export default defineContentScript({
       popupOpen = true;
       popupTarget = target;
 
-      const x = Math.min(e.clientX + 12, window.innerWidth - 300);
-      const y = Math.min(e.clientY + 12, window.innerHeight - 300);
+      const POPUP_GAP = 12;
+      let popupY: number;
+      let anchorBottom = false;
+      if (toolbar) {
+        const barRect = toolbar.getBoundingClientRect();
+        if (toolbarPosition === "bottom") {
+          anchorBottom = true;
+          popupY = window.innerHeight - barRect.top + POPUP_GAP;
+        } else {
+          popupY = barRect.bottom + POPUP_GAP;
+        }
+      } else {
+        popupY = window.innerHeight / 2 - 110;
+      }
+
+      const fontData = readFontData(target);
+
+      navigator.clipboard.writeText(fontData.family).catch(() => {});
 
       popupState = {
-        data: readFontData(target),
+        data: fontData,
         editFields: buildEditFields(target),
-        x,
-        y,
+        x: 0,
+        y: popupY,
+        anchorBottom,
         visible: true,
         confirmDiscard: false,
       };
+      if (overlay) overlay.style.display = "none";
+      if (badge) badge.style.display = "none";
       syncPopup();
+      setToolbarMode("collapsed");
     }
 
     function enable() {
@@ -699,7 +802,8 @@ export default defineContentScript({
         [data-kolophon="toolbar"],
         [data-kolophon="toolbar"] * { cursor: default !important; }
         [data-kolophon="toolbar-btn"],
-        [data-kolophon="toolbar-close"] { cursor: pointer !important; }
+        [data-kolophon="toolbar-close"],
+        [data-kolophon="toolbar-cancel"] { cursor: pointer !important; }
         [data-kolophon="toolbar-grip"] { cursor: grab !important; }
         [data-kolophon="toolbar-grip"]:active { cursor: grabbing !important; }
 
@@ -761,7 +865,9 @@ export default defineContentScript({
       active = false;
       popupOpen = false;
       editedStyles.clear();
-      popupState = { ...popupState, confirmDiscard: false };
+      popupState = { ...popupState, visible: false, confirmDiscard: false };
+      syncPopup();
+      setToolbarMode("full");
       hide();
       cursorStyle?.remove();
       cursorStyle = null;
