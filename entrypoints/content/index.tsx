@@ -27,11 +27,15 @@ export default defineContentScript({
     let reactRoot: Root | null = null;
     let popupTarget: Element | null = null;
     const editedStyles = new Map<HTMLElement, string>();
+    const elementExtraProps = new Map<Element, string[]>();
     let toolbarFullContent: HTMLElement | null = null;
     let toolbarCollapsedContent: HTMLElement | null = null;
     let popupState = {
       data: null as FontData | null,
       editFields: [] as EditField[],
+      additionalProps: [] as EditField[],
+      savedExtraProps: [] as string[],
+      mode: "inspect" as "inspect" | "edit" | "collection",
       x: 0,
       y: 0,
       anchorBottom: false,
@@ -41,6 +45,33 @@ export default defineContentScript({
 
     function parseFontName(fontFamily: string): string {
       return fontFamily.split(",")[0].trim().replace(/['"]/g, "");
+    }
+
+    function buildEditBadgeText(el: Element): string {
+      const s = window.getComputedStyle(el);
+      const tag = el.tagName.toLowerCase();
+      const weight = parseInt(s.fontWeight) || 400;
+      let weightClass = "font-normal";
+      if (weight <= 100) weightClass = "font-thin";
+      else if (weight <= 200) weightClass = "font-extralight";
+      else if (weight <= 300) weightClass = "font-light";
+      else if (weight <= 400) weightClass = "font-normal";
+      else if (weight <= 500) weightClass = "font-medium";
+      else if (weight <= 600) weightClass = "font-semibold";
+      else if (weight <= 700) weightClass = "font-bold";
+      else if (weight <= 800) weightClass = "font-extrabold";
+      else weightClass = "font-black";
+      const fontSize = parseFloat(s.fontSize) || 16;
+      const lhRaw = s.lineHeight === "normal" ? fontSize * 1.2 : parseFloat(s.lineHeight);
+      const ratio = lhRaw / fontSize;
+      let leadingClass = "leading-normal";
+      if (ratio <= 1) leadingClass = "leading-none";
+      else if (ratio <= 1.25) leadingClass = "leading-tight";
+      else if (ratio <= 1.375) leadingClass = "leading-snug";
+      else if (ratio <= 1.5) leadingClass = "leading-normal";
+      else if (ratio <= 1.625) leadingClass = "leading-relaxed";
+      else leadingClass = "leading-loose";
+      return `${tag}.${weightClass}.${leadingClass}`;
     }
 
     function rgbToHex(rgb: string): string {
@@ -73,172 +104,100 @@ export default defineContentScript({
       return p.length === 4 && p[3] === 0;
     }
 
+    const TEXT_TAGS = new Set([
+      "p", "h1", "h2", "h3", "h4", "h5", "h6",
+      "span", "a", "li", "dt", "dd", "blockquote", "pre", "code",
+      "em", "strong", "b", "i", "u", "s", "mark", "small", "sub", "sup",
+      "label", "figcaption", "caption", "time", "address", "cite", "q",
+      "abbr", "kbd", "button", "td", "th",
+    ]);
+
     function buildEditFields(el: Element): EditField[] {
       const s = window.getComputedStyle(el);
       const fields: EditField[] = [];
       const fontSize = px(s.fontSize) || 16;
-
-      fields.push({
-        prop: "font-size",
-        label: "Size",
-        kind: "length",
-        unit: "px",
-        value: String(round(fontSize)),
-        min: 6,
-        max: 200,
-        step: 1,
-      });
-      fields.push({
-        prop: "line-height",
-        label: "Line height",
-        kind: "number",
-        value: String(
-          round(
-            s.lineHeight === "normal" ? 1.2 : px(s.lineHeight) / fontSize,
-            2,
-          ),
-        ),
-        min: 0.8,
-        max: 3,
-        step: 0.05,
-      });
-      fields.push({
-        prop: "letter-spacing",
-        label: "Letter spacing",
-        kind: "length",
-        unit: "px",
-        value: String(
-          round(s.letterSpacing === "normal" ? 0 : px(s.letterSpacing), 1),
-        ),
-        min: -5,
-        max: 20,
-        step: 0.1,
-      });
-      fields.push({
-        prop: "font-weight",
-        label: "Weight",
-        kind: "number",
-        value: String(px(s.fontWeight) || 400),
-        min: 100,
-        max: 900,
-        step: 100,
-      });
-      fields.push({
-        prop: "color",
-        label: "Text color",
-        kind: "color",
-        value: rgbToHex(s.color),
-      });
-
-      if (!isTransparent(s.backgroundColor)) {
-        fields.push({
-          prop: "background-color",
-          label: "Background",
-          kind: "color",
-          value: rgbToHex(s.backgroundColor),
-        });
-      }
-      if (px(s.opacity) < 1) {
-        fields.push({
-          prop: "opacity",
-          label: "Opacity",
-          kind: "number",
-          value: String(round(px(s.opacity), 2)),
-          min: 0,
-          max: 1,
-          step: 0.05,
-        });
-      }
-      if (px(s.borderTopLeftRadius) > 0) {
-        fields.push({
-          prop: "border-radius",
-          label: "Radius",
-          kind: "length",
-          unit: "px",
-          value: String(round(px(s.borderTopLeftRadius))),
-          min: 0,
-          max: 80,
-          step: 1,
-        });
-      }
-      if (px(s.paddingTop) > 0) {
-        fields.push({
-          prop: "padding",
-          label: "Padding",
-          kind: "length",
-          unit: "px",
-          value: String(round(px(s.paddingTop))),
-          min: 0,
-          max: 96,
-          step: 1,
-        });
-      }
-
       const display = s.display;
       const isFlexGrid = /^(inline-)?(flex|grid)$/.test(display);
-      if (display && display !== "block" && display !== "inline") {
-        fields.push({
-          prop: "display",
-          label: "Display",
-          kind: "select",
-          value: display,
-          options: [
-            "block",
-            "inline",
-            "inline-block",
-            "flex",
-            "inline-flex",
-            "grid",
-            "none",
-          ],
-        });
-      }
-      if (isFlexGrid) {
-        if (px(s.gap) > 0) {
-          fields.push({
-            prop: "gap",
-            label: "Gap",
-            kind: "length",
-            unit: "px",
-            value: String(round(px(s.gap))),
-            min: 0,
-            max: 64,
-            step: 1,
-          });
+      const isText = TEXT_TAGS.has(el.tagName.toLowerCase());
+
+      if (isText) {
+        fields.push({ prop: "font-size", label: "Size", kind: "length", unit: "px", value: String(round(fontSize)), min: 6, max: 200, step: 1 });
+        fields.push({ prop: "line-height", label: "Line height", kind: "number", value: String(round(s.lineHeight === "normal" ? 1.2 : px(s.lineHeight) / fontSize, 2)), min: 0.8, max: 3, step: 0.05 });
+        fields.push({ prop: "letter-spacing", label: "Letter spacing", kind: "length", unit: "px", value: String(round(s.letterSpacing === "normal" ? 0 : px(s.letterSpacing), 1)), min: -5, max: 20, step: 0.1 });
+        fields.push({ prop: "font-weight", label: "Weight", kind: "number", value: String(px(s.fontWeight) || 400), min: 100, max: 900, step: 100 });
+        fields.push({ prop: "color", label: "Text color", kind: "color", value: rgbToHex(s.color) });
+        if (s.textAlign && s.textAlign !== "start" && s.textAlign !== "left") {
+          fields.push({ prop: "text-align", label: "Text align", kind: "select", value: s.textAlign, options: ["left", "center", "right", "justify"] });
         }
-        fields.push({
-          prop: "align-items",
-          label: "Align items",
-          kind: "select",
-          value: s.alignItems,
-          options: ["stretch", "flex-start", "center", "flex-end", "baseline"],
-        });
-        fields.push({
-          prop: "justify-content",
-          label: "Justify",
-          kind: "select",
-          value: s.justifyContent,
-          options: [
-            "flex-start",
-            "center",
-            "flex-end",
-            "space-between",
-            "space-around",
-            "space-evenly",
-          ],
-        });
+      } else {
+        fields.push({ prop: "display", label: "Display", kind: "select", value: display, options: ["block", "inline", "inline-block", "flex", "inline-flex", "grid", "none"] });
+        if (isFlexGrid) {
+          if (px(s.gap) > 0) {
+            fields.push({ prop: "gap", label: "Gap", kind: "length", unit: "px", value: String(round(px(s.gap))), min: 0, max: 64, step: 1 });
+          }
+          fields.push({ prop: "align-items", label: "Align items", kind: "select", value: s.alignItems, options: ["stretch", "flex-start", "center", "flex-end", "baseline"] });
+          fields.push({ prop: "justify-content", label: "Justify", kind: "select", value: s.justifyContent, options: ["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"] });
+        }
       }
-      if (s.textAlign && s.textAlign !== "start" && s.textAlign !== "left") {
-        fields.push({
-          prop: "text-align",
-          label: "Text align",
-          kind: "select",
-          value: s.textAlign,
-          options: ["left", "center", "right", "justify"],
-        });
+
+      if (!isTransparent(s.backgroundColor)) {
+        fields.push({ prop: "background-color", label: "Background", kind: "color", value: rgbToHex(s.backgroundColor) });
+      }
+      if (px(s.opacity) < 1) {
+        fields.push({ prop: "opacity", label: "Opacity", kind: "number", value: String(round(px(s.opacity), 2)), min: 0, max: 1, step: 0.05 });
+      }
+      if (px(s.borderTopLeftRadius) > 0) {
+        fields.push({ prop: "border-radius", label: "Radius", kind: "length", unit: "px", value: String(round(px(s.borderTopLeftRadius))), min: 0, max: 80, step: 1 });
+      }
+      if (px(s.paddingTop) > 0) {
+        fields.push({ prop: "padding", label: "Padding", kind: "length", unit: "px", value: String(round(px(s.paddingTop))), min: 0, max: 96, step: 1 });
       }
 
       return fields;
+    }
+
+    function buildAdditionalProps(el: Element, existing: EditField[]): EditField[] {
+      const s = window.getComputedStyle(el);
+      const skip = new Set(existing.map((f) => f.prop));
+      const pxVal = (prop: string) => String(round(px(s.getPropertyValue(prop))));
+      const candidates: EditField[] = [
+        { prop: "background-color", label: "Background", kind: "color", value: rgbToHex(s.backgroundColor) },
+        { prop: "border-radius", label: "Border radius", kind: "length", unit: "px", value: pxVal("border-top-left-radius"), min: 0, max: 80, step: 1 },
+        { prop: "padding", label: "Padding", kind: "length", unit: "px", value: pxVal("padding-top"), min: 0, max: 96, step: 1 },
+        { prop: "padding-top", label: "Padding top", kind: "length", unit: "px", value: pxVal("padding-top"), min: 0, max: 96, step: 1 },
+        { prop: "padding-right", label: "Padding right", kind: "length", unit: "px", value: pxVal("padding-right"), min: 0, max: 96, step: 1 },
+        { prop: "padding-bottom", label: "Padding bottom", kind: "length", unit: "px", value: pxVal("padding-bottom"), min: 0, max: 96, step: 1 },
+        { prop: "padding-left", label: "Padding left", kind: "length", unit: "px", value: pxVal("padding-left"), min: 0, max: 96, step: 1 },
+        { prop: "margin-top", label: "Margin top", kind: "length", unit: "px", value: pxVal("margin-top"), min: -96, max: 96, step: 1 },
+        { prop: "margin-right", label: "Margin right", kind: "length", unit: "px", value: pxVal("margin-right"), min: -96, max: 96, step: 1 },
+        { prop: "margin-bottom", label: "Margin bottom", kind: "length", unit: "px", value: pxVal("margin-bottom"), min: -96, max: 96, step: 1 },
+        { prop: "margin-left", label: "Margin left", kind: "length", unit: "px", value: pxVal("margin-left"), min: -96, max: 96, step: 1 },
+        { prop: "width", label: "Width", kind: "length", unit: "px", value: pxVal("width"), min: 0, max: 2000, step: 1 },
+        { prop: "height", label: "Height", kind: "length", unit: "px", value: pxVal("height"), min: 0, max: 2000, step: 1 },
+        { prop: "max-width", label: "Max width", kind: "length", unit: "px", value: pxVal("max-width"), min: 0, max: 2000, step: 1 },
+        { prop: "min-width", label: "Min width", kind: "length", unit: "px", value: pxVal("min-width"), min: 0, max: 2000, step: 1 },
+        { prop: "opacity", label: "Opacity", kind: "number", value: String(round(px(s.opacity), 2)), min: 0, max: 1, step: 0.05 },
+        { prop: "font-style", label: "Font style", kind: "select", value: s.fontStyle, options: ["normal", "italic", "oblique"] },
+        { prop: "text-transform", label: "Text transform", kind: "select", value: s.textTransform, options: ["none", "uppercase", "lowercase", "capitalize"] },
+        { prop: "text-decoration-line", label: "Text decoration", kind: "select", value: s.textDecorationLine, options: ["none", "underline", "line-through", "overline"] },
+        { prop: "text-align", label: "Text align", kind: "select", value: s.textAlign, options: ["left", "center", "right", "justify"] },
+        { prop: "display", label: "Display", kind: "select", value: s.display, options: ["block", "inline", "inline-block", "flex", "inline-flex", "grid", "none"] },
+        { prop: "flex-direction", label: "Flex direction", kind: "select", value: s.flexDirection, options: ["row", "column", "row-reverse", "column-reverse"] },
+        { prop: "flex-wrap", label: "Flex wrap", kind: "select", value: s.flexWrap, options: ["nowrap", "wrap", "wrap-reverse"] },
+        { prop: "align-items", label: "Align items", kind: "select", value: s.alignItems, options: ["stretch", "flex-start", "center", "flex-end", "baseline"] },
+        { prop: "justify-content", label: "Justify content", kind: "select", value: s.justifyContent, options: ["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly"] },
+        { prop: "gap", label: "Gap", kind: "length", unit: "px", value: pxVal("gap"), min: 0, max: 64, step: 1 },
+        { prop: "border-width", label: "Border width", kind: "length", unit: "px", value: pxVal("border-top-width"), min: 0, max: 20, step: 1 },
+        { prop: "border-color", label: "Border color", kind: "color", value: rgbToHex(s.borderTopColor) },
+        { prop: "overflow", label: "Overflow", kind: "select", value: s.overflow, options: ["visible", "hidden", "scroll", "auto"] },
+        { prop: "cursor", label: "Cursor", kind: "select", value: s.cursor, options: ["auto", "default", "pointer", "text", "move", "not-allowed", "grab", "none"] },
+        { prop: "z-index", label: "Z-index", kind: "number", value: s.zIndex === "auto" ? "0" : s.zIndex, min: -10, max: 9999, step: 1 },
+        { prop: "visibility", label: "Visibility", kind: "select", value: s.visibility, options: ["visible", "hidden"] },
+        { prop: "pointer-events", label: "Pointer events", kind: "select", value: s.pointerEvents, options: ["auto", "none"] },
+        { prop: "word-spacing", label: "Word spacing", kind: "length", unit: "px", value: String(round(s.wordSpacing === "normal" ? 0 : px(s.wordSpacing), 1)), min: -5, max: 20, step: 0.5 },
+        { prop: "white-space", label: "White space", kind: "select", value: s.whiteSpace, options: ["normal", "nowrap", "pre", "pre-wrap", "pre-line"] },
+      ];
+      return candidates.filter((c) => !skip.has(c.prop));
     }
 
     function readFontData(target: Element): FontData {
@@ -265,8 +224,6 @@ export default defineContentScript({
         boxSizing: "border-box",
         pointerEvents: "none",
         zIndex: "2147483644",
-        background: "#BBCAFF40",
-        border: "1.5px dashed #2252FE",
         borderRadius: "5px",
         display: "none",
       });
@@ -292,6 +249,12 @@ export default defineContentScript({
       });
       return el;
     }
+
+    const modeIcons: Record<string, string> = {
+      inspect: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg>',
+      edit: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>',
+      collection: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z"/></svg>',
+    };
 
     let toolbarPosition: "bottom" | "top" = "bottom";
     const TOOLBAR_EDGE = 24;
@@ -328,12 +291,6 @@ export default defineContentScript({
         opacity: "0",
         transition: "none",
       });
-
-      const modeIcons: Record<string, string> = {
-        inspect: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg>',
-        edit: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>',
-        collection: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z"/></svg>',
-      };
 
       // ── Full toolbar content ──
       const fullWrap = document.createElement("div");
@@ -618,6 +575,9 @@ export default defineContentScript({
         <PopupCard
           data={popupState.data}
           editFields={popupState.editFields}
+          additionalProps={popupState.additionalProps}
+          savedExtraProps={popupState.savedExtraProps}
+          mode={popupState.mode}
           x={popupState.x}
           y={popupState.y}
           anchorBottom={popupState.anchorBottom}
@@ -625,10 +585,19 @@ export default defineContentScript({
           confirmDiscard={popupState.confirmDiscard}
           onClose={closePopup}
           onStyleChange={applyStyle}
+          onAddExtraProp={addExtraProp}
           onConfirmDiscard={discardEdits}
           onCancelDiscard={cancelDiscard}
         />,
       );
+    }
+
+    function addExtraProp(prop: string) {
+      if (!popupTarget) return;
+      const existing = elementExtraProps.get(popupTarget) ?? [];
+      if (!existing.includes(prop)) {
+        elementExtraProps.set(popupTarget, [...existing, prop]);
+      }
     }
 
     function applyStyle(prop: string, value: string) {
@@ -656,17 +625,24 @@ export default defineContentScript({
       if (rect.width === 0 && rect.height === 0) return;
 
       const PAD = 3;
+      const isEdit = activeMode === "edit";
+      const borderColor = isEdit ? "#D13E19" : "#2252FE";
+      const bgColor = isEdit ? "#D13E1914" : "#BBCAFF40";
+
       Object.assign(overlay.style, {
         top: `${rect.top - PAD}px`,
         left: `${rect.left - PAD}px`,
         width: `${rect.width + PAD * 2}px`,
         height: `${rect.height + PAD * 2}px`,
         display: "block",
+        border: `1.5px dashed ${borderColor}`,
+        background: bgColor,
       });
 
-      badge.textContent = parseFontName(
-        window.getComputedStyle(target).fontFamily,
-      );
+      badge.textContent = isEdit
+        ? buildEditBadgeText(target)
+        : parseFontName(window.getComputedStyle(target).fontFamily);
+      badge.style.background = isEdit ? "#D13E19" : "#2252FE";
       badge.style.top = `${Math.min(rect.bottom + PAD + 4, window.innerHeight - 20)}px`;
       badge.style.left = `${rect.left - PAD}px`;
       badge.style.display = "block";
@@ -707,6 +683,8 @@ export default defineContentScript({
     function setToolbarMode(mode: "full" | "collapsed") {
       if (!toolbarFullContent || !toolbarCollapsedContent || !toolbar) return;
       if (mode === "collapsed") {
+        const modeIconEl = toolbar.querySelector('[data-kolophon="toolbar-mode-icon"]');
+        if (modeIconEl) modeIconEl.innerHTML = modeIcons[activeMode];
         toolbar.style.minWidth = `${toolbar.offsetWidth}px`;
         toolbarFullContent.style.display = "none";
         toolbarCollapsedContent.style.display = "flex";
@@ -755,11 +733,17 @@ export default defineContentScript({
 
       const fontData = readFontData(target);
 
-      navigator.clipboard.writeText(fontData.family).catch(() => {});
+      if (activeMode === "inspect") {
+        navigator.clipboard.writeText(fontData.family).catch(() => {});
+      }
 
+      const defaultFields = buildEditFields(target);
       popupState = {
         data: fontData,
-        editFields: buildEditFields(target),
+        editFields: defaultFields,
+        additionalProps: buildAdditionalProps(target, defaultFields),
+        savedExtraProps: elementExtraProps.get(target) ?? [],
+        mode: activeMode,
         x: 0,
         y: popupY,
         anchorBottom,
@@ -868,6 +852,7 @@ export default defineContentScript({
       active = false;
       popupOpen = false;
       editedStyles.clear();
+      elementExtraProps.clear();
       popupState = { ...popupState, visible: false, confirmDiscard: false };
       syncPopup();
       setToolbarMode("full");

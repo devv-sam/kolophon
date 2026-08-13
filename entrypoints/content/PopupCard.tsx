@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export interface FontData {
   name: string;
@@ -58,11 +58,15 @@ interface Props {
   visible: boolean;
   onClose: () => void;
   editFields?: EditField[];
+  additionalProps?: EditField[];
+  savedExtraProps?: string[];
+  mode?: "inspect" | "edit" | "collection";
   x: number;
   y: number;
   anchorBottom?: boolean;
   confirmDiscard?: boolean;
   onStyleChange?: (prop: string, value: string) => void;
+  onAddExtraProp?: (prop: string) => void;
   onConfirmDiscard?: () => void;
   onCancelDiscard?: () => void;
 }
@@ -219,18 +223,35 @@ export function buildColorFormats(
 
 const FONT = '"Inter", system-ui, -apple-system, sans-serif';
 
-export function PopupCard({ data, visible, y, anchorBottom, onClose }: Props) {
+export function PopupCard({ data, visible, y, anchorBottom, onClose, mode, editFields, additionalProps, savedExtraProps, onStyleChange, onAddExtraProp }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [colorFormat, setColorFormat] = useState<ColorFormat>("hex");
   const [copiedFamily, setCopiedFamily] = useState(false);
   const [copiedStyles, setCopiedStyles] = useState(false);
   const [animIn, setAnimIn] = useState(false);
+  const [localValues, setLocalValues] = useState<Record<string, string>>({});
+  const [extraFields, setExtraFields] = useState<EditField[]>([]);
+  const [justAdded, setJustAdded] = useState<string | null>(null);
+  const [propPickerOpen, setPropPickerOpen] = useState(false);
+  const [propSearch, setPropSearch] = useState("");
   const familyTimer = useRef<number | undefined>(undefined);
   const stylesTimer = useRef<number | undefined>(undefined);
+  const propSearchRef = useRef<HTMLInputElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const prevHeightRef = useRef(0);
 
   useEffect(() => {
     if (visible) {
       setAnimIn(false);
+      setPropPickerOpen(false);
+      setPropSearch("");
+      const restored = (additionalProps ?? []).filter((f) =>
+        (savedExtraProps ?? []).includes(f.prop),
+      );
+      setExtraFields(restored);
+      const initial: Record<string, string> = {};
+      for (const f of [...(editFields ?? []), ...restored]) initial[f.prop] = f.value;
+      setLocalValues(initial);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setAnimIn(true));
       });
@@ -239,9 +260,79 @@ export function PopupCard({ data, visible, y, anchorBottom, onClose }: Props) {
     }
   }, [visible, data]);
 
+  useEffect(() => {
+    if (propPickerOpen) {
+      requestAnimationFrame(() => propSearchRef.current?.focus());
+    }
+  }, [propPickerOpen]);
+
+  // Height FLIP animation — runs after every render that changes field count or active element
+  useLayoutEffect(() => {
+    if (!visible || mode !== "edit") {
+      prevHeightRef.current = 0;
+      return;
+    }
+    const el = cardRef.current;
+    if (!el) return;
+
+    // Temporarily release any explicit height so we can measure the natural height
+    el.style.height = "";
+    el.style.overflow = "";
+    const next = el.offsetHeight;
+    const prev = prevHeightRef.current;
+    prevHeightRef.current = next;
+
+    if (!prev || Math.abs(next - prev) < 2) return;
+
+    // Set back to previous height (synchronously, before paint)
+    el.style.overflow = "hidden";
+    el.style.height = `${prev}px`;
+    el.style.transition = "none";
+
+    // Animate to new height in the next frame
+    requestAnimationFrame(() => {
+      el.style.transition = "height 0.28s cubic-bezier(0.4, 0, 0.2, 1)";
+      el.style.height = `${next}px`;
+
+      const cleanup = (e?: TransitionEvent) => {
+        if (e && e.propertyName !== "height") return;
+        el.style.height = "";
+        el.style.overflow = "";
+        el.style.transition = "";
+      };
+      el.addEventListener("transitionend", cleanup as EventListener, { once: true });
+      setTimeout(() => cleanup(), 400);
+    });
+  }, [visible, mode, data, extraFields.length, editFields?.length]);
+
   if (!visible || !data) return null;
 
   const colorValues = buildColorFormats(data.colorRgb, data.colorHex);
+
+  function handleFieldChange(field: EditField, raw: string) {
+    setLocalValues((prev) => ({ ...prev, [field.prop]: raw }));
+    const val = field.unit ? raw + field.unit : raw;
+    onStyleChange?.(field.prop, val);
+  }
+
+  function addExtraProp(field: EditField) {
+    setExtraFields((prev) => [...prev, field]);
+    setLocalValues((prev) => ({ ...prev, [field.prop]: field.value }));
+    setJustAdded(field.prop);
+    setPropPickerOpen(false);
+    setPropSearch("");
+    onAddExtraProp?.(field.prop);
+    setTimeout(() => setJustAdded(null), 350);
+  }
+
+  const alreadyAdded = new Set([...(editFields ?? []).map((f) => f.prop), ...extraFields.map((f) => f.prop)]);
+  const filteredAdditional = (additionalProps ?? [])
+    .filter((f) => !alreadyAdded.has(f.prop))
+    .filter((f) =>
+      !propSearch ||
+      f.label.toLowerCase().includes(propSearch.toLowerCase()) ||
+      f.prop.toLowerCase().includes(propSearch.toLowerCase()),
+    );
 
   function handleCopyFamily(e: React.MouseEvent) {
     e.stopPropagation();
@@ -290,6 +381,69 @@ export function PopupCard({ data, visible, y, anchorBottom, onClose }: Props) {
       : "translateX(-50%) scale(0.92)",
     transition: "opacity 0.2s linear, transform 0.2s linear",
   };
+
+  if (mode === "edit") {
+    return (
+      <div
+        ref={cardRef}
+        style={{ ...cardStyle, boxSizing: "border-box" }}
+        onClick={(e) => { e.stopPropagation(); if (propPickerOpen) { setPropPickerOpen(false); } }}
+      >
+        <div style={{ ...styles.header, marginBottom: 12, alignItems: "flex-start" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <div style={{ ...styles.fontName, fontSize: 15, color: "#D13E19" }}>
+              {data.tag}
+            </div>
+            <div style={{ ...styles.fontFamily, fontSize: 12 }}>
+              {data.name} · {data.size} · {data.weight}
+            </div>
+          </div>
+          <div style={{ position: "relative", flexShrink: 0 }}>
+            <button
+              type="button"
+              data-clickable
+              style={styles.addPropBtn}
+              onClick={(e) => { e.stopPropagation(); setPropPickerOpen((o) => !o); setPropSearch(""); }}
+            >
+              + Property
+            </button>
+            {propPickerOpen && (
+              <div style={styles.propDropdown} onClick={(e) => e.stopPropagation()}>
+                <input
+                  ref={propSearchRef}
+                  type="text"
+                  placeholder="Filter properties…"
+                  value={propSearch}
+                  style={styles.propSearchInput}
+                  onChange={(e) => setPropSearch(e.target.value)}
+                />
+                <div style={styles.propList}>
+                  {filteredAdditional.length === 0 ? (
+                    <div style={styles.propEmpty}>No more properties</div>
+                  ) : (
+                    filteredAdditional.map((f) => (
+                      <PropOption key={f.prop} field={f} onAdd={addExtraProp} />
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={styles.editList}>
+          {[...(editFields ?? []), ...extraFields].map((field) => (
+            <AnimatedRow key={field.prop} isNew={field.prop === justAdded}>
+              <EditRow
+                field={field}
+                value={localValues[field.prop] ?? field.value}
+                onChange={handleFieldChange}
+              />
+            </AnimatedRow>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -398,6 +552,160 @@ export function PopupCard({ data, visible, y, anchorBottom, onClose }: Props) {
       <div style={styles.specimen}>
         AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwYyZz 0123456789@?!(&)
       </div>
+    </div>
+  );
+}
+
+function AnimatedRow({ isNew, children }: { isNew: boolean; children: React.ReactNode }) {
+  const [show, setShow] = useState(!isNew);
+  useEffect(() => {
+    if (!isNew) return;
+    const raf = requestAnimationFrame(() => setShow(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return (
+    <div
+      style={{
+        opacity: show ? 1 : 0,
+        transform: show ? "translateY(0)" : "translateY(-3px)",
+        transition: show ? "opacity 0.2s ease, transform 0.2s ease" : "none",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function PropOption({ field, onAdd }: { field: EditField; onAdd: (f: EditField) => void }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      data-clickable
+      style={{ ...styles.propOption, background: hovered ? "rgba(0,0,0,0.04)" : "transparent" }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={() => onAdd(field)}
+    >
+      <span style={styles.propOptionLabel}>{field.label}</span>
+      <span style={styles.propOptionValue}>{field.value}</span>
+    </div>
+  );
+}
+
+function EditRow({
+  field,
+  value,
+  onChange,
+}: {
+  field: EditField;
+  value: string;
+  onChange: (field: EditField, raw: string) => void;
+}) {
+  const boxStyle: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    background: "rgba(0,0,0,0.04)",
+    border: "1px solid rgba(0,0,0,0.08)",
+    borderRadius: 4,
+    overflow: "hidden",
+  };
+  const numInputStyle: React.CSSProperties = {
+    fontFamily: "ui-monospace, 'Cascadia Code', monospace",
+    fontSize: 12,
+    color: "#000",
+    background: "transparent",
+    border: "none",
+    padding: "3px 6px",
+    width: 56,
+    textAlign: "right",
+    outline: "none",
+  };
+  const unitStyle: React.CSSProperties = {
+    fontSize: 11,
+    color: "rgba(0,0,0,0.35)",
+    fontFamily: "ui-monospace, monospace",
+    paddingRight: 7,
+    paddingLeft: 1,
+    userSelect: "none",
+  };
+
+  let control: React.ReactNode;
+
+  if (field.kind === "color") {
+    control = (
+      <label style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer", position: "relative" }}>
+        <span
+          style={{
+            display: "inline-block",
+            width: 14,
+            height: 14,
+            background: value,
+            border: "1px solid rgba(0,0,0,0.12)",
+            borderRadius: 2,
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ fontFamily: "ui-monospace, 'Cascadia Code', monospace", fontSize: 12, color: "#000" }}>
+          {value}
+        </span>
+        <input
+          type="color"
+          value={value}
+          style={{ position: "absolute", opacity: 0, inset: 0, width: "100%", height: "100%", cursor: "pointer", border: "none", padding: 0 }}
+          onChange={(e) => onChange(field, e.target.value)}
+        />
+      </label>
+    );
+  } else if (field.kind === "select") {
+    control = (
+      <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+        <select
+          value={value}
+          style={{
+            fontFamily: "ui-monospace, 'Cascadia Code', monospace",
+            fontSize: 12,
+            color: "#000",
+            background: "rgba(0,0,0,0.04)",
+            border: "1px solid rgba(0,0,0,0.08)",
+            borderRadius: 4,
+            padding: "3px 26px 3px 8px",
+            outline: "none",
+            appearance: "none" as const,
+            cursor: "pointer",
+            minWidth: 90,
+          }}
+          onChange={(e) => onChange(field, e.target.value)}
+        >
+          {field.options?.map((o) => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </select>
+        <span style={{ position: "absolute", right: 7, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "rgba(0,0,0,0.4)", display: "flex", lineHeight: 0 }}>
+          <ChevronDown />
+        </span>
+      </div>
+    );
+  } else {
+    control = (
+      <div style={boxStyle}>
+        <input
+          type="number"
+          value={value}
+          min={field.min}
+          max={field.max}
+          step={field.step}
+          style={numInputStyle}
+          onChange={(e) => onChange(field, e.target.value)}
+        />
+        {field.unit && <span style={unitStyle}>{field.unit}</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.editRow}>
+      <span style={styles.editLabel}>{field.label}</span>
+      <div style={{ flexShrink: 0 }}>{control}</div>
     </div>
   );
 }
@@ -587,5 +895,111 @@ const styles = {
     color: "rgba(0,0,0,0.7)",
     overflowWrap: "break-word" as const,
     fontFamily: FONT,
+  } as React.CSSProperties,
+
+  editList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  } as React.CSSProperties,
+
+  editRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    minHeight: 28,
+  } as React.CSSProperties,
+
+  editLabel: {
+    fontSize: 12,
+    color: "rgba(0,0,0,0.45)",
+    fontFamily: FONT,
+    flexShrink: 0,
+    minWidth: 90,
+  } as React.CSSProperties,
+
+  addPropBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "5px 10px",
+    border: "1px solid rgba(209,62,25,0.3)",
+    borderRadius: 5,
+    background: "rgba(209,62,25,0.05)",
+    color: "#D13E19",
+    fontFamily: FONT,
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: "pointer",
+    lineHeight: 1,
+    whiteSpace: "nowrap",
+  } as React.CSSProperties,
+
+  propDropdown: {
+    position: "absolute",
+    top: "calc(100% + 6px)",
+    right: 0,
+    zIndex: 10,
+    background: "#ffffff",
+    border: "1px solid rgba(0,0,0,0.08)",
+    borderRadius: 7,
+    boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+    width: 220,
+    overflow: "hidden",
+  } as React.CSSProperties,
+
+  propSearchInput: {
+    display: "block",
+    width: "100%",
+    boxSizing: "border-box" as const,
+    padding: "8px 12px",
+    border: "none",
+    borderBottom: "1px solid rgba(0,0,0,0.07)",
+    fontFamily: FONT,
+    fontSize: 12,
+    color: "#000",
+    outline: "none",
+    background: "transparent",
+  } as React.CSSProperties,
+
+  propList: {
+    maxHeight: 200,
+    overflowY: "auto" as const,
+    padding: "4px 0",
+  } as React.CSSProperties,
+
+  propOption: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "6px 12px",
+    cursor: "pointer",
+    gap: 8,
+  } as React.CSSProperties,
+
+  propOptionLabel: {
+    fontSize: 12,
+    fontFamily: FONT,
+    color: "#000",
+    flexShrink: 0,
+  } as React.CSSProperties,
+
+  propOptionValue: {
+    fontSize: 11,
+    fontFamily: "ui-monospace, 'Cascadia Code', monospace",
+    color: "rgba(0,0,0,0.35)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
+    maxWidth: 80,
+  } as React.CSSProperties,
+
+  propEmpty: {
+    padding: "10px 12px",
+    fontSize: 12,
+    color: "rgba(0,0,0,0.35)",
+    fontFamily: FONT,
+    textAlign: "center" as const,
   } as React.CSSProperties,
 };
