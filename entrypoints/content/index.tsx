@@ -266,7 +266,8 @@ export default defineContentScript({
         pointerEvents: "none",
         zIndex: "2147483644",
         background: "#BBCAFF40",
-        border: "1px solid #2252FE",
+        border: "1.5px dashed #2252FE",
+        borderRadius: "5px",
         display: "none",
       });
       return el;
@@ -654,19 +655,20 @@ export default defineContentScript({
       const rect = target.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) return;
 
+      const PAD = 3;
       Object.assign(overlay.style, {
-        top: `${rect.top}px`,
-        left: `${rect.left}px`,
-        width: `${rect.width}px`,
-        height: `${rect.height}px`,
+        top: `${rect.top - PAD}px`,
+        left: `${rect.left - PAD}px`,
+        width: `${rect.width + PAD * 2}px`,
+        height: `${rect.height + PAD * 2}px`,
         display: "block",
       });
 
       badge.textContent = parseFontName(
         window.getComputedStyle(target).fontFamily,
       );
-      badge.style.top = `${Math.min(rect.bottom + 4, window.innerHeight - 20)}px`;
-      badge.style.left = `${rect.left}px`;
+      badge.style.top = `${Math.min(rect.bottom + PAD + 4, window.innerHeight - 20)}px`;
+      badge.style.left = `${rect.left - PAD}px`;
       badge.style.display = "block";
     }
 
@@ -721,6 +723,7 @@ export default defineContentScript({
       popupState = { ...popupState, visible: false, confirmDiscard: false };
       syncPopup();
       setToolbarMode("full");
+      hide();
     }
 
     function onClick(e: MouseEvent) {
@@ -763,8 +766,8 @@ export default defineContentScript({
         visible: true,
         confirmDiscard: false,
       };
-      if (overlay) overlay.style.display = "none";
-      if (badge) badge.style.display = "none";
+      activeTarget = target;
+      track(target);
       syncPopup();
       setToolbarMode("collapsed");
     }
