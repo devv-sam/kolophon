@@ -21,7 +21,7 @@ export default defineContentScript({
     let activeTarget: Element | null = null;
     let active = false;
     let popupOpen = false;
-    let activeMode: "inspect" | "edit" | "collection" = "inspect";
+    let activeMode: "inspect" | "edit" = "inspect";
     let draggingToolbar = false;
 
     let reactRoot: Root | null = null;
@@ -37,7 +37,7 @@ export default defineContentScript({
       editFields: [] as EditField[],
       additionalProps: [] as EditField[],
       savedExtraProps: [] as string[],
-      mode: "inspect" as "inspect" | "edit" | "collection",
+      mode: "inspect" as "inspect" | "edit",
       x: 0,
       y: 0,
       anchorBottom: false,
@@ -255,7 +255,6 @@ export default defineContentScript({
     const modeIcons: Record<string, string> = {
       inspect: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg>',
       edit: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>',
-      collection: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z"/></svg>',
     };
 
     let toolbarPosition: "bottom" | "top" = "bottom";
@@ -366,13 +365,12 @@ export default defineContentScript({
       fullWrap.appendChild(grip);
 
       const modes: {
-        id: "inspect" | "edit" | "collection";
+        id: "inspect" | "edit";
         label: string;
         icon: string;
       }[] = [
         { id: "inspect", label: "Inspect", icon: modeIcons.inspect },
         { id: "edit", label: "Edit", icon: modeIcons.edit },
-        { id: "collection", label: "Collection", icon: modeIcons.collection },
       ];
 
       const modeGroup = document.createElement("div");
@@ -566,29 +564,6 @@ export default defineContentScript({
       });
       collapsedWrap.appendChild(redoBtn);
 
-      const saveBtn = document.createElement("button");
-      saveBtn.setAttribute("data-kolophon", "toolbar-save");
-      saveBtn.innerHTML =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg><span style="margin-left:5px">Save</span>';
-      Object.assign(saveBtn.style, {
-        display: "none",
-        alignItems: "center",
-        padding: "6px 10px",
-        border: "none",
-        borderRadius: "6px",
-        background: "rgba(0,0,0,0.06)",
-        color: "#000000",
-        fontFamily: "inherit",
-        fontSize: "14px",
-        fontWeight: "500",
-        lineHeight: "1",
-        cursor: "pointer",
-        marginRight: "2px",
-      });
-      saveBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-      });
-      collapsedWrap.appendChild(saveBtn);
 
       const collapsedDivider = document.createElement("div");
       Object.assign(collapsedDivider.style, {
@@ -813,18 +788,10 @@ export default defineContentScript({
 
         const undoBtnEl = toolbar.querySelector('[data-kolophon="toolbar-undo"]') as HTMLElement | null;
         const redoBtnEl = toolbar.querySelector('[data-kolophon="toolbar-redo"]') as HTMLElement | null;
-        const saveBtnEl = toolbar.querySelector('[data-kolophon="toolbar-save"]') as HTMLElement | null;
-
-        if (activeMode === "edit") {
-          if (undoBtnEl) undoBtnEl.style.display = "flex";
-          if (redoBtnEl) redoBtnEl.style.display = "flex";
-          if (saveBtnEl) saveBtnEl.style.display = "none";
-          updateUndoRedoButtons();
-        } else {
-          if (undoBtnEl) undoBtnEl.style.display = "none";
-          if (redoBtnEl) redoBtnEl.style.display = "none";
-          if (saveBtnEl) saveBtnEl.style.display = "flex";
-        }
+        const isEdit = activeMode === "edit";
+        if (undoBtnEl) undoBtnEl.style.display = isEdit ? "flex" : "none";
+        if (redoBtnEl) redoBtnEl.style.display = isEdit ? "flex" : "none";
+        if (isEdit) updateUndoRedoButtons();
 
         toolbar.style.minWidth = `${toolbar.offsetWidth}px`;
         toolbarFullContent.style.display = "none";
@@ -933,8 +900,7 @@ export default defineContentScript({
         [data-kolophon="toolbar-close"],
         [data-kolophon="toolbar-cancel"],
         [data-kolophon="toolbar-undo"],
-        [data-kolophon="toolbar-redo"],
-        [data-kolophon="toolbar-save"] { cursor: pointer !important; }
+        [data-kolophon="toolbar-redo"] { cursor: pointer !important; }
         [data-kolophon="toolbar-grip"] { cursor: grab !important; }
         [data-kolophon="toolbar-grip"]:active { cursor: grabbing !important; }
 
