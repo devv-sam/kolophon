@@ -10,6 +10,7 @@ Requires Node 20+ and [pnpm](https://pnpm.io).
 pnpm install
 pnpm dev          # launch Chrome with the extension loaded
 pnpm compile      # typecheck — run before every PR
+pnpm --filter @kolophon/mcp test   # MCP server tests (needs Chrome installed)
 ```
 
 ## Branches

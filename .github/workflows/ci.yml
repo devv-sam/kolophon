@@ -19,3 +19,7 @@ jobs:
       - run: pnpm compile
       - run: pnpm build
       - run: pnpm --filter @kolophon/mcp build
+      # Ubuntu 24.04 runners block Chrome's sandbox via AppArmor; relax it here
+      # rather than shipping --no-sandbox in the server.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: pnpm --filter @kolophon/mcp test

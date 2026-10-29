@@ -16,7 +16,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "compile": "tsc --noEmit"
+    "compile": "tsc --noEmit",
+    "test": "tsc && node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
