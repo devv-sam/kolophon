@@ -1,3 +1,5 @@
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
 import { launch, type LaunchedChrome } from "chrome-launcher";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 
@@ -8,7 +10,14 @@ let browser: Promise<Browser> | undefined;
 function getBrowser(): Promise<Browser> {
   browser ??= (async () => {
     try {
-      chrome = await launch({ chromeFlags: ["--headless=new", "--disable-gpu"] });
+      // chrome-launcher ignores a missing CHROME_PATH when searching, and crashes the
+      // process with an unhandled spawn error when given one, so check it here.
+      const chromePath = process.env.CHROME_PATH;
+      if (chromePath) await access(chromePath, constants.X_OK);
+      chrome = await launch({
+        chromePath,
+        chromeFlags: ["--headless=new", "--disable-gpu"],
+      });
     } catch (err) {
       browser = undefined;
       throw new Error(
@@ -37,7 +46,8 @@ export async function withPage<T>(url: string, fn: (page: Page) => Promise<T>): 
   }
 }
 
-export async function closeBrowser(): Promise<void> {
-  await (await browser?.catch(() => undefined))?.disconnect();
+// Sync on purpose: killing Chrome drops the CDP connection, and awaiting a
+// disconnect first can outlive the client's shutdown grace period and orphan Chrome.
+export function closeBrowser(): void {
   chrome?.kill();
 }

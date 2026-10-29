@@ -24,9 +24,12 @@ server.registerTool(
   },
 );
 
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => closeBrowser().finally(() => process.exit(0)));
+function shutdown() {
+  closeBrowser();
+  process.exit(0);
 }
-process.stdin.on("close", () => closeBrowser().finally(() => process.exit(0)));
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+process.stdin.on("close", shutdown);
 
 await server.connect(new StdioServerTransport());
