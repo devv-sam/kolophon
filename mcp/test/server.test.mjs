@@ -49,6 +49,26 @@ test("reads a page served locally", async () => {
   assert.equal(JSON.parse(res.content[0].text).title, "Kolophon fixture");
 });
 
+test("groups the rendered text styles", async () => {
+  const res = await typography(client, `${base}typography.html`);
+  assert.ok(!res.isError, res.content[0].text);
+  const { styles, families } = JSON.parse(res.content[0].text);
+
+  assert.equal(styles.length, 3, "hidden span must not add a style");
+  assert.ok(!styles.some((s) => s.size === "50px"));
+
+  const [body, ...rest] = styles;
+  assert.deepEqual([body.size, body.weight, body.lineHeight, body.elements], ["16px", "400", "24px", 2]);
+  assert.deepEqual(body.tags, ["p"]);
+  assert.ok(rest.every((s) => s.chars < body.chars), "ranked by visible text");
+
+  const heading = styles.find((s) => s.tags.includes("h1"));
+  assert.deepEqual([heading.size, heading.weight], ["32px", "700"]);
+  assert.equal(styles.find((s) => s.tags.includes("button")).letterSpacing, "0.5px");
+
+  assert.deepEqual(families.map((f) => f.name).sort(), ["Arial", "Georgia"]);
+});
+
 test("rejects non-http URLs", async () => {
   const res = await typography(client, "file:///etc/passwd");
   assert.equal(res.isError, true);
