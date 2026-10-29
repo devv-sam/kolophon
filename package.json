@@ -1,10 +1,14 @@
 {
   "name": "kolophon",
-  "description": "Inspect, copy, and tweak the fonts on any web page. Hover to reveal type, copy CSS, edit live, and save fonts you love.",
+  "description": "Design context for AI coding agents: typography, computed styles, and motion extracted from any URL. Ships today as a Chrome font inspector.",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0-alpha.0",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.27.0",
   "author": "devv-sam",
   "repository": {
     "type": "git",
