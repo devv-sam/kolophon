@@ -6,7 +6,6 @@ export default defineConfig({
     name: "kolophon",
     description:
       "Inspect, copy, and tweak the fonts on any web page. Hover to reveal type, copy CSS, edit live, and save fonts you love.",
-    version: "1.0.0",
     permissions: [
       "activeTab",
       "scripting",
