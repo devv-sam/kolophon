@@ -69,6 +69,31 @@ test("groups the rendered text styles", async () => {
   assert.deepEqual(families.map((f) => f.name).sort(), ["Arial", "Georgia"]);
 });
 
+test("reports which fonts actually rendered", async () => {
+  const res = await typography(client, `${base}fonts.html`);
+  assert.ok(!res.isError, res.content[0].text);
+  const families = Object.fromEntries(JSON.parse(res.content[0].text).families.map((f) => [f.name, f]));
+
+  const web = families["Fixture Sans"];
+  assert.equal(web.webFont, true);
+  assert.deepEqual(web.faces.map((f) => f.status), ["loaded"]);
+  assert.equal(web.fallback, false);
+  assert.ok(web.rendered.some((f) => f.custom));
+
+  const broken = families["Broken Font"];
+  assert.equal(broken.webFont, true);
+  assert.deepEqual(broken.faces.map((f) => f.status), ["error"]);
+  assert.equal(broken.fallback, true);
+  assert.ok(broken.rendered.length > 0 && broken.rendered.every((f) => !f.custom));
+
+  const local = families["Definitely Not Installed"];
+  assert.equal(local.webFont, false);
+  assert.equal(local.fallback, true);
+
+  assert.equal(families.serif.fallback, false);
+  assert.ok(families.serif.rendered.length > 0);
+});
+
 test("rejects non-http URLs", async () => {
   const res = await typography(client, "file:///etc/passwd");
   assert.equal(res.isError, true);
