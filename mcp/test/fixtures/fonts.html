@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fonts fixture</title>
+    <style>
+      /* Ronzino by Collletttivo, SIL Open Font License 1.1 (fonts/LICENSE.txt) */
+      @font-face { font-family: "Fixture Sans"; src: url(fonts/Ronzino-Regular.woff2) format("woff2"); }
+      @font-face { font-family: "Broken Font"; src: url(fonts/missing.woff2) format("woff2"); }
+      .web { font-family: "Fixture Sans", sans-serif; }
+      .broken { font-family: "Broken Font", sans-serif; }
+      .local { font-family: "Definitely Not Installed", monospace; }
+      .generic { font-family: serif; }
+    </style>
+  </head>
+  <body>
+    <p class="web">Loaded from a self-hosted woff2.</p>
+    <p class="broken">This web font fails to load.</p>
+    <p class="local">This local font is not installed.</p>
+    <p class="generic">A generic family.</p>
+  </body>
+</html>

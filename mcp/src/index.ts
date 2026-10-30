@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { closeBrowser, withPage } from "./browser.js";
-import { extractTypography } from "./typography.js";
+import { getTypography } from "./typography.js";
 
 const server = new McpServer({ name: "kolophon", version: "2.0.0-alpha.0" });
 
@@ -11,7 +11,7 @@ server.registerTool(
   "get_typography",
   {
     description:
-      "Extract the typography a live web page actually renders: font families and every distinct text style (family, weight, size, line height, letter spacing), ranked by how much visible text uses it.",
+      "Extract the typography a live web page actually renders: font families (with whether each web or local font actually loaded, or a fallback silently rendered instead) and every distinct text style (family, weight, size, line height, letter spacing), ranked by how much visible text uses it.",
     inputSchema: { url: z.string().url().describe("The http(s) page to inspect") },
   },
   async ({ url }) => {
@@ -19,7 +19,7 @@ server.registerTool(
       const result = await withPage(url, async (page) => ({
         url,
         title: await page.title(),
-        ...(await page.evaluate(extractTypography)),
+        ...(await getTypography(page)),
       }));
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
