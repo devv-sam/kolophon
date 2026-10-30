@@ -4,10 +4,13 @@
     <meta charset="utf-8" />
     <title>Fonts fixture</title>
     <style>
-      /* Ronzino by Collletttivo, SIL Open Font License 1.1 (fonts/LICENSE.txt) */
+      /* Ronzino by Collletttivo (fonts/LICENSE.txt) and Inter by The Inter Project Authors
+         (fonts/Inter-LICENSE.txt), both SIL Open Font License 1.1 */
       @font-face { font-family: "Fixture Sans"; src: url(fonts/Ronzino-Regular.woff2) format("woff2"); }
+      @font-face { font-family: "Fixture Variable"; src: url(fonts/InterVariable.woff2) format("woff2"); font-weight: 100 900; }
       @font-face { font-family: "Broken Font"; src: url(fonts/missing.woff2) format("woff2"); }
       .web { font-family: "Fixture Sans", sans-serif; }
+      .variable { font-family: "Fixture Variable", sans-serif; font-variation-settings: "wght" 650; }
       .broken { font-family: "Broken Font", sans-serif; }
       .local { font-family: "Definitely Not Installed", monospace; }
       .generic { font-family: serif; }
@@ -15,6 +18,7 @@
   </head>
   <body>
     <p class="web">Loaded from a self-hosted woff2.</p>
+    <p class="variable">A variable font with a custom weight.</p>
     <p class="broken">This web font fails to load.</p>
     <p class="local">This local font is not installed.</p>
     <p class="generic">A generic family.</p>

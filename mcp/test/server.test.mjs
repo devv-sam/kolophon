@@ -94,6 +94,21 @@ test("reports which fonts actually rendered", async () => {
   assert.ok(families.serif.rendered.length > 0);
 });
 
+test("reports variable font axes", async () => {
+  const res = await typography(client, `${base}fonts.html`);
+  assert.ok(!res.isError, res.content[0].text);
+  const { families, styles } = JSON.parse(res.content[0].text);
+  const byName = Object.fromEntries(families.map((f) => [f.name, f]));
+
+  const variable = byName["Fixture Variable"];
+  assert.equal(variable.variable, true, JSON.stringify(variable));
+  assert.deepEqual(variable.axes.find((a) => a.tag === "wght"), { tag: "wght", name: "Weight", min: 100, default: 400, max: 900 });
+  assert.match(styles.find((s) => s.family.includes("Fixture Variable")).variationSettings, /"wght" 650/);
+
+  assert.equal(byName["Fixture Sans"].variable, false);
+  assert.deepEqual(byName["Fixture Sans"].axes, []);
+});
+
 test("rejects non-http URLs", async () => {
   const res = await typography(client, "file:///etc/passwd");
   assert.equal(res.isError, true);
