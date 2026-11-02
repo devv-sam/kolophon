@@ -1,7 +1,9 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -40,9 +42,9 @@ after(async () => {
   http?.close();
 });
 
-test("lists both tools", async () => {
+test("lists the tools", async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ["get_motion", "get_typography"]);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ["get_design_sheet", "get_motion", "get_typography"]);
 });
 
 test("reads a page served locally", async () => {
@@ -188,6 +190,29 @@ test("skips interaction when asked", async () => {
   const m = raw(res);
   assert.deepEqual([m.interaction.ran, m.triggered.length, m.scriptedStyles.length], [false, 0, 0]);
   assert.ok(m.keyframes.length > 0);
+});
+
+test("renders a design sheet as PNG and PDF", async () => {
+  const pdf = join(tmpdir(), `kolophon-test-${process.pid}.pdf`);
+  try {
+    const res = await client.callTool({ name: "get_design_sheet", arguments: { url: `${base}fonts.html`, pdf_path: pdf, interactions: false } });
+    assert.ok(!res.isError, res.content.at(-1).text);
+    const [image, note] = res.content;
+    assert.equal(image.mimeType, "image/png");
+    const png = Buffer.from(image.data, "base64");
+    assert.equal(png.subarray(1, 4).toString(), "PNG");
+    assert.equal(png.readUInt32BE(16), 1200, "full sheet width");
+    assert.match(note.text, /PDF saved to/);
+    assert.equal((await readFile(pdf)).subarray(0, 5).toString(), "%PDF-");
+  } finally {
+    await rm(pdf, { force: true });
+  }
+});
+
+test("rejects a relative or non-PDF pdf_path", async () => {
+  const res = await client.callTool({ name: "get_design_sheet", arguments: { url: `${base}basic.html`, pdf_path: "sheet.png", interactions: false } });
+  assert.equal(res.isError, true);
+  assert.match(res.content[0].text, /absolute path ending in \.pdf/);
 });
 
 test("rejects non-http URLs", async () => {

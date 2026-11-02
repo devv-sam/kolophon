@@ -37,7 +37,7 @@ const stackNames = (stack: string) => stack.split(",").map((n) => n.trim().repla
 const lineHeightRatio = (s: TextStyle) => (s.lineHeight === "normal" ? null : px(s.lineHeight) / px(s.size));
 
 // Nearest Tailwind step; the extension's badge rounds up instead, which maps 510 to semibold.
-function tailwindWeight(weight: number): string {
+export function tailwindWeight(weight: number): string {
   const names = ["thin", "extralight", "light", "normal", "medium", "semibold", "bold", "extrabold", "black"];
   return `font-${names[Math.min(8, Math.max(0, Math.round(weight / 100) - 1))]}`;
 }
@@ -51,6 +51,9 @@ function source(f: FontFamily): string {
 function axesText(f: FontFamily): string {
   return f.axes.map((a) => `${a.tag} ${fmt(a.min)}–${fmt(a.max)}`).join(", ") || "—";
 }
+
+/** The typography guidance notes, as used in DESIGN.md and the design sheet. */
+export const typographyGuidance = (t: Typography) => guidance(t, prepare(t));
 
 function guidance(t: Typography, p: ReturnType<typeof prepare>): string[] {
   const notes: string[] = [];
@@ -199,7 +202,7 @@ const TAILWIND_EASINGS: [Bezier, string, string][] = [
   [[0.4, 0, 1, 1], "standard-in", "Tailwind `ease-in`"],
 ];
 
-function bezier(easing: string): Bezier | null {
+export function bezier(easing: string): Bezier | null {
   if (KEYWORD_EASINGS[easing]) return KEYWORD_EASINGS[easing];
   const m = easing.match(/cubic-bezier\(([^)]+)\)/);
   const n = m?.[1].split(",").map(Number);
@@ -207,7 +210,7 @@ function bezier(easing: string): Bezier | null {
 }
 
 const sameCurve = (a: Bezier, b: Bezier) => a.every((v, i) => Math.abs(v - b[i]) < 0.001);
-const overshoots = (b: Bezier) => b[1] < 0 || b[1] > 1 || b[3] < 0 || b[3] > 1;
+export const overshoots = (b: Bezier) => b[1] < 0 || b[1] > 1 || b[3] < 0 || b[3] > 1;
 const curveText = (b: Bezier) => `cubic-bezier(${b.map(fmt).join(", ")})`;
 
 /** Lists up to `max` names as code, then "and N more". */
@@ -216,7 +219,7 @@ function names(list: string[], max = 8): string {
   return list.length > max ? `${shown} and ${list.length - max} more` : shown;
 }
 
-function describeEasing(easing: string): string {
+export function describeEasing(easing: string): string {
   const b = bezier(easing);
   // Springs converted to linear() carry 15-digit stops; 3 decimals keep the shape.
   if (!b) return easing.replace(/\d+\.\d{4,}/g, (n) => fmt(Number(n)));
@@ -226,7 +229,7 @@ function describeEasing(easing: string): string {
 }
 
 /** First duration in an animation shorthand, in ms. */
-function firstDuration(animation: string): number | null {
+export function firstDuration(animation: string): number | null {
   const m = animation.match(/(?:^|[\s(])(\d*\.?\d+)(ms|s)(?=$|[\s,)])/);
   return m ? Math.round(parseFloat(m[1]) * (m[2] === "ms" ? 1 : 1000)) : null;
 }
@@ -240,7 +243,7 @@ function allEasings(m: Motion): string[] {
 }
 
 /** Distinct curves in use, keyed by their numbers so `cubic-bezier(.4,0,.2,1)` and `(0.4, 0, 0.2, 1)` merge. */
-function distinctCurves(m: Motion): { curve: Bezier; easing: string; slug: string }[] {
+export function distinctCurves(m: Motion): { curve: Bezier; easing: string; slug: string }[] {
   const curves: { curve: Bezier; easing: string; slug: string }[] = [];
   let custom = 0;
   let springy = 0;
@@ -258,7 +261,7 @@ function distinctCurves(m: Motion): { curve: Bezier; easing: string; slug: strin
 
 const ms = (n: number) => `${n}ms`;
 
-function motionGuidance(m: Motion): string[] {
+export function motionGuidance(m: Motion): string[] {
   const notes: string[] = [];
   const durations = [
     ...new Set([

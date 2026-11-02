@@ -5,6 +5,7 @@ import { z } from "zod";
 import { closeBrowser, withPage } from "./browser.js";
 import { getMotion } from "./motion.js";
 import { motionToDesignMd, motionToTailwind, motionToTokens, toDesignMd, toTailwind, toTokens } from "./output.js";
+import { captureSheet, renderSheet } from "./sheet.js";
 import { getTypography } from "./typography.js";
 
 const server = new McpServer({ name: "kolophon", version: "2.0.0-alpha.0" });
@@ -61,6 +62,33 @@ server.registerTool(
           { type: "text", text: JSON.stringify(result, null, 2) },
         ],
       };
+    } catch (err) {
+      return { isError: true, content: [{ type: "text", text: (err as Error).message }] };
+    }
+  },
+);
+
+server.registerTool(
+  "get_design_sheet",
+  {
+    description:
+      "Render a visual design sheet of a live web page's typography and motion: font specimens in the page's real fonts, variable axes, the type scale with specs, easing curves, durations, keyframes and agent notes. Returns it as a PNG image, and also saves a PDF when pdf_path is given. Runs the same extraction as get_typography and get_motion, so it takes 10-20s.",
+    inputSchema: {
+      url: z.string().url().describe("The http(s) page to inspect"),
+      pdf_path: z.string().optional().describe("Absolute path ending in .pdf to also save the sheet as a PDF"),
+      interactions: z.boolean().default(true).describe("Scroll and hover to include motion triggered by interaction"),
+    },
+  },
+  async ({ url, pdf_path, interactions }) => {
+    try {
+      const { png, title } = await withPage(url, async (page) => {
+        const title = await page.title();
+        const typography = await getTypography(page);
+        const motion = await getMotion(page, { interactions });
+        return { title, ...(await captureSheet(page, renderSheet(typography, motion, { url, title }), pdf_path)) };
+      });
+      const note = `Design sheet for ${title || url}.${pdf_path ? ` PDF saved to ${pdf_path}.` : ""}`;
+      return { content: [{ type: "image", data: png, mimeType: "image/png" }, { type: "text", text: note }] };
     } catch (err) {
       return { isError: true, content: [{ type: "text", text: (err as Error).message }] };
     }
