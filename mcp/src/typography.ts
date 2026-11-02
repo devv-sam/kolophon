@@ -1,3 +1,6 @@
+import type { Page } from "puppeteer-core";
+import { readFontFile, type FontAxis } from "./fontfile.js";
+
 export interface TextStyle {
   family: string;
   weight: string;
@@ -5,6 +8,8 @@ export interface TextStyle {
   lineHeight: string;
   letterSpacing: string;
   style: string;
+  /** Computed `font-variation-settings`, e.g. `"wght" 650`; `normal` when unset. */
+  variationSettings: string;
   /** Visible elements rendered in this style. */
   elements: number;
   /** Visible characters rendered in this style; the ranking weight. */
@@ -12,8 +17,6 @@ export interface TextStyle {
   tags: string[];
   sample: string;
 }
-
-import type { Page } from "puppeteer-core";
 
 /** One `@font-face` from `document.fonts`. `unloaded` means declared but never used. */
 export interface FontFaceInfo {
@@ -41,6 +44,10 @@ export interface FontFamily {
   rendered: RenderedFont[];
   /** The first family did not render and something else stood in; null when Chrome reported no fonts. */
   fallback: boolean | null;
+  /** One of the family's font files has variation axes. */
+  variable: boolean;
+  /** Axes across the family's font files, ranges widened to cover all of them. */
+  axes: FontAxis[];
 }
 
 export interface Typography {
@@ -49,7 +56,11 @@ export interface Typography {
 }
 
 type PageFamily = Pick<FontFamily, "name" | "stack" | "chars">;
-type PageTypography = { families: PageFamily[]; styles: TextStyle[]; faces: Record<string, FontFaceInfo[]> };
+type PageTypography = {
+  families: PageFamily[];
+  styles: TextStyle[];
+  faces: Record<string, FontFaceInfo[]>;
+};
 
 /**
  * Runs inside the page via `page.evaluate`, which serializes only this function,
@@ -78,7 +89,7 @@ export function extractTypography(): PageTypography {
     if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
     if (el.closest("script, style, noscript, template")) continue;
     const s = getComputedStyle(el);
-    const key = [s.fontFamily, s.fontWeight, s.fontSize, s.lineHeight, s.letterSpacing, s.fontStyle].join("|");
+    const key = [s.fontFamily, s.fontWeight, s.fontSize, s.lineHeight, s.letterSpacing, s.fontStyle, s.fontVariationSettings].join("|");
     let group = styles.get(key);
     if (!group) {
       group = {
@@ -88,6 +99,7 @@ export function extractTypography(): PageTypography {
         lineHeight: s.lineHeight,
         letterSpacing: s.letterSpacing,
         style: s.fontStyle,
+        variationSettings: s.fontVariationSettings,
         elements: 0,
         chars: 0,
         tags: [],
@@ -133,10 +145,31 @@ export async function getTypography(page: Page): Promise<Typography> {
   const { families, styles, faces } = await page.evaluate(extractTypography);
 
   const renderedByStack = new Map<string, Map<string, RenderedFont>>();
+  let fontFiles: { url: string; info: ReturnType<typeof readFontFile> }[] = [];
+  // Font file URL → lowercased CSS family, from every stylesheet's @font-face rules.
+  const fontFileFamilies = new Map<string, string>();
   const cdp = await page.createCDPSession();
   try {
     await cdp.send("DOM.enable");
+    // CSS.enable announces every existing stylesheet. Reading their text over CDP works for
+    // cross-origin sheets (CDNs, Google Fonts) that the page itself isn't allowed to read.
+    const sheets: { id: string; url: string }[] = [];
+    cdp.on("CSS.styleSheetAdded", ({ header }) => sheets.push({ id: header.styleSheetId, url: header.sourceURL || page.url() }));
     await cdp.send("CSS.enable");
+    for (const sheet of sheets) {
+      try {
+        const { text } = await cdp.send("CSS.getStyleSheetText", { styleSheetId: sheet.id });
+        for (const [block] of text.matchAll(/@font-face\s*\{[^}]*\}/g)) {
+          const family = block.match(/font-family\s*:\s*['"]?([^'";}]+)/)?.[1].trim().toLowerCase();
+          if (!family) continue;
+          for (const [, url] of block.matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/g)) {
+            fontFileFamilies.set(new URL(url, sheet.url).href, family);
+          }
+        }
+      } catch {
+        // A sheet removed since it was announced has no text; skip it.
+      }
+    }
     const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
     for (const [i, style] of styles.entries()) {
       try {
@@ -156,6 +189,27 @@ export async function getTypography(page: Page): Promise<Typography> {
         // The sample element went away (e.g. the page re-rendered); this style just has no render data.
       }
     }
+
+    // shortcut: reads the first 20 font files up to 10MB each; raise if real pages need more.
+    const { frameTree } = await cdp.send("Page.getResourceTree");
+    const urls = frameTree.resources.filter((r) => r.type === "Font").map((r) => r.url).slice(0, 20);
+    // Re-fetched in the page so they come from Chrome's cache; CDP keeps no bodies loaded before it was enabled.
+    const files = await page.evaluate(async (urls: string[]) => {
+      return Promise.all(
+        urls.map(async (url) => {
+          try {
+            const bytes = new Uint8Array(await (await fetch(url, { cache: "force-cache" })).arrayBuffer());
+            if (bytes.length > 10_000_000) return null;
+            let binary = "";
+            for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+            return btoa(binary);
+          } catch {
+            return null;
+          }
+        }),
+      );
+    }, urls);
+    fontFiles = urls.map((url, i) => ({ url, info: files[i] ? readFontFile(Buffer.from(files[i], "base64")) : null }));
   } finally {
     await cdp.detach();
   }
@@ -173,7 +227,21 @@ export async function getTypography(page: Page): Promise<Typography> {
         : GENERIC_FAMILIES.has(key) ? false
         : webFont ? !rendered.some((f) => f.custom)
         : !rendered.some((f) => f.name.toLowerCase() === key);
-      return { ...family, webFont, faces: familyFaces, rendered, fallback };
+      // A file belongs to this family by its @font-face URL, or else by the name inside the file.
+      const names = new Set([key, ...rendered.map((f) => f.name.toLowerCase())]);
+      const axes = new Map<string, FontAxis>();
+      for (const { url, info } of fontFiles) {
+        const owner = fontFileFamilies.get(url);
+        if (!info || (owner ? owner !== key : !names.has(info.family.toLowerCase()))) continue;
+        for (const axis of info.axes) {
+          const seen = axes.get(axis.tag);
+          if (seen) {
+            seen.min = Math.min(seen.min, axis.min);
+            seen.max = Math.max(seen.max, axis.max);
+          } else axes.set(axis.tag, { ...axis });
+        }
+      }
+      return { ...family, webFont, faces: familyFaces, rendered, fallback, variable: axes.size > 0, axes: [...axes.values()] };
     }),
   };
 }

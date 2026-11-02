@@ -11,7 +11,7 @@ server.registerTool(
   "get_typography",
   {
     description:
-      "Extract the typography a live web page actually renders: font families (with whether each web or local font actually loaded, or a fallback silently rendered instead) and every distinct text style (family, weight, size, line height, letter spacing), ranked by how much visible text uses it.",
+      "Extract the typography a live web page actually renders: font families (with whether each web or local font actually loaded, or a fallback silently rendered instead, and the variation axes and ranges of variable fonts) and every distinct text style (family, weight, size, line height, letter spacing, font-variation-settings), ranked by how much visible text uses it.",
     inputSchema: { url: z.string().url().describe("The http(s) page to inspect") },
   },
   async ({ url }) => {
