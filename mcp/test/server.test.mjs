@@ -157,13 +157,37 @@ test("extracts motion", async () => {
 
   assert.deepEqual(m.reducedMotion.reduce, [".reveal"]);
   assert.deepEqual(m.animations.map((a) => a.name).sort(), ["rise", "spin"]);
-  assert.deepEqual(m.scriptAnimations, [{ duration: 100000, easing: "ease-out", properties: ["opacity"] }]);
+  assert.deepEqual(m.scriptAnimations, [{ duration: 100000, easing: "ease-out", properties: ["opacity"], count: 1 }]);
 
   assert.match(designMd, /^# Motion — Motion fixture/);
   assert.match(designMd, /Overshooting \(springy\) curves give `pop` a bounce/);
   assert.match(designMd, /switches off motion for `\.reveal`/);
   assert.match(tailwind, /--ease-spring-1: cubic-bezier\(0\.34, 1\.56, 0\.64, 1\);/);
   assert.match(tailwind, /@keyframes spin \{/);
+
+  // Only visible by interacting: a JS hover animation, a frame-by-frame hover loop, a reveal on scroll.
+  assert.equal(m.interaction.completed, true, JSON.stringify(m.interaction));
+  assert.ok(m.triggered.some((t) => t.trigger === "hover" && t.type === "WebAnimation" && t.duration === 240), JSON.stringify(m.triggered));
+  assert.ok(m.triggered.some((t) => t.trigger === "scroll" && t.type === "CSSAnimation" && t.name === "slide-in"), JSON.stringify(m.triggered));
+  const glow = m.scriptedStyles.find((st) => st.element === "div.glow");
+  assert.deepEqual([glow?.trigger, glow?.properties], ["hover", ["opacity"]], JSON.stringify(m.scriptedStyles));
+});
+
+test("keeps load-time motion when the page navigates during interaction", async () => {
+  const res = await client.callTool({ name: "get_motion", arguments: { url: `${base}motion-navigates.html` } });
+  assert.ok(!res.isError, res.content[0].text);
+  const m = raw(res);
+  assert.equal(m.interaction.completed, false);
+  assert.match(m.interaction.note, /navigated/);
+  assert.equal(m.transitions[0].property, "opacity", "static results survive");
+  assert.match(res.content[0].text, /stopped early/);
+});
+
+test("skips interaction when asked", async () => {
+  const res = await client.callTool({ name: "get_motion", arguments: { url: `${base}motion.html`, interactions: false } });
+  const m = raw(res);
+  assert.deepEqual([m.interaction.ran, m.triggered.length, m.scriptedStyles.length], [false, 0, 0]);
+  assert.ok(m.keyframes.length > 0);
 });
 
 test("rejects non-http URLs", async () => {

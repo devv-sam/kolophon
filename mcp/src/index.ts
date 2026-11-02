@@ -41,12 +41,18 @@ server.registerTool(
   "get_motion",
   {
     description:
-      "Extract the motion of a live web page: computed transitions (property, duration, easing), @keyframes with the selectors that use them and their timing (CSS variables resolved), animations running at load, prefers-reduced-motion handling, and View Transitions. Returns four text items in order: a DESIGN.md motion section ending with agent guidance, W3C design tokens (tokens.json), a Tailwind v4 @theme block with easings, animations and keyframes, and the raw extraction as JSON.",
-    inputSchema: { url: z.string().url().describe("The http(s) page to inspect") },
+      "Extract the motion of a live web page: computed transitions (property, duration, easing), @keyframes with the selectors that use them and their timing (CSS variables resolved), animations running at load, prefers-reduced-motion handling, and View Transitions. Returns four text items in order: a DESIGN.md motion section ending with agent guidance, W3C design tokens (tokens.json), a Tailwind v4 @theme block with easings, animations and keyframes, and the raw extraction as JSON. By default it also scrolls the page and hovers its controls (up to about 12s) to catch motion that only starts on interaction, including JavaScript animations.",
+    inputSchema: {
+      url: z.string().url().describe("The http(s) page to inspect"),
+      interactions: z
+        .boolean()
+        .default(true)
+        .describe("Scroll and hover to record motion triggered by interaction. Set false for a faster, load-only read."),
+    },
   },
-  async ({ url }) => {
+  async ({ url, interactions }) => {
     try {
-      const result = await withPage(url, async (page) => ({ url, title: await page.title(), ...(await getMotion(page)) }));
+      const result = await withPage(url, async (page) => ({ url, title: await page.title(), ...(await getMotion(page, { interactions })) }));
       return {
         content: [
           { type: "text", text: motionToDesignMd(result, result) },

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseMotionCss } from "../dist/motion.js";
+import { hoverTargets, parseMotionCss } from "../dist/motion.js";
 import { motionToDesignMd, motionToTailwind, motionToTokens } from "../dist/output.js";
 
 test("parses keyframes, their users and reduced-motion blocks from CSS text", () => {
@@ -24,7 +24,10 @@ test("parses keyframes, their users and reduced-motion blocks from CSS text", ()
   assert.equal(parseMotionCss([{ text: ".x { color: red }" }]).viewTransitions, false);
 });
 
-const empty = { transitions: [], animations: [], scriptAnimations: [], keyframes: [], reducedMotion: { reduce: [], noPreference: [] }, viewTransitions: false };
+const empty = {
+  transitions: [], animations: [], scriptAnimations: [], keyframes: [], reducedMotion: { reduce: [], noPreference: [] }, viewTransitions: false,
+  triggered: [], scriptedStyles: [], interaction: { ran: true, completed: true, scrolledPx: 1200, hovered: 4 },
+};
 const page = { url: "https://example.test", title: "Example" };
 
 test("warns when nothing handles reduced motion", () => {
@@ -51,4 +54,38 @@ test("handles a page with no motion", () => {
   assert.match(motionToDesignMd(empty, page), /None found at load\.[\s\S]*None found\./);
   assert.deepEqual(motionToTokens(empty), { duration: {}, easing: {}, transition: {} });
   assert.equal(motionToTailwind(empty), "@theme {\n}");
+});
+
+test("finds what :hover rules target", () => {
+  const css = ".tray:hover .item:hover { transform: scale(1.1) } a:hover, .card:is(.a, .b):hover { color: red } .x::after:hover {} .plain { color: blue } :hover { outline: 0 }";
+  assert.deepEqual(hoverTargets([{ text: css }]), [".tray .item", "a", ".card:is(.a, .b)", ".x"]);
+});
+
+test("reports interaction motion and says when the pass stopped early", () => {
+  const m = {
+    ...empty,
+    triggered: [
+      { trigger: "hover", type: "WebAnimation", name: "", duration: 180, easing: "cubic-bezier(0.22, 1, 0.36, 1)", count: 2 },
+      { trigger: "hover", type: "CSSTransition", name: "border-top-color", duration: 150, easing: "ease", count: 4 },
+      { trigger: "scroll", type: "CSSAnimation", name: "reveal-rise", duration: 700, easing: "ease-out", count: 3 },
+      { trigger: "hover", type: "WebAnimation", name: "", duration: 400, easing: "linear(0, 0.2 10%, 0.9 40%, 1.05 60%, 1)", count: 1 },
+    ],
+    scriptedStyles: [{ trigger: "continuous", element: "span.glow", properties: ["color"], writes: 240, span: 4000 }],
+    interaction: { ran: true, completed: false, note: "the page navigated to https://example.test/next during hovering", scrolledPx: 600, hovered: 2 },
+  };
+  const md = motionToDesignMd(m, page);
+  assert.match(md, /Some motion comes from JavaScript .*180ms cubic-bezier\(0\.22, 1, 0\.36, 1\)/);
+  assert.match(md, /spring converted to CSS/);
+  assert.match(md, /On hover, transitions actually animate: border-color\./);
+  assert.match(md, /`reveal-rise` plays as elements scroll into view/);
+  assert.match(md, /`span\.glow` is animated frame by frame from JavaScript continuously \(color, 240 updates over 4000ms\)/);
+  assert.match(md, /stopped early \(the page navigated to https:\/\/example\.test\/next during hovering\)/);
+  assert.match(md, /hovered 2 controls before stopping early/);
+  assert.deepEqual(Object.keys(motionToTokens(m).duration), ["180", "400"]);
+});
+
+test("says when interactions were skipped", () => {
+  const md = motionToDesignMd({ ...empty, interaction: { ran: false, completed: false, scrolledPx: 0, hovered: 0 } }, page);
+  assert.match(md, /## Triggered by interaction\n\nSkipped\./);
+  assert.match(md, /Scrolling and hovering were skipped/);
 });

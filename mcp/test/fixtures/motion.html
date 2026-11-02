@@ -13,6 +13,10 @@
       @keyframes pop { 0% { transform: scale(1); } 50% { transform: scale(1.2); animation-timing-function: ease-in; } 100% { transform: scale(1); } }
       .like:hover { animation: pop .45s cubic-bezier(.34,1.56,.64,1); }
       @media (prefers-reduced-motion: reduce) { .reveal { animation: none; } }
+      .spacer { height: 2500px; }
+      .magnet, .glow { cursor: pointer; }
+      @keyframes slide-in { from { transform: translateX(-20px); } to { transform: none; } }
+      .below.in { animation: slide-in 400ms ease-out; }
     </style>
   </head>
   <body>
@@ -23,8 +27,30 @@
     <span class="like">Like</span>
     <div class="spinner">Loading</div>
     <p id="scripted">Faded in from JavaScript</p>
+    <div class="magnet">Hover me</div>
+    <div class="glow">Hover for a scripted glow</div>
+    <div class="spacer"></div>
+    <div class="below">Slides in on scroll</div>
     <script>
       document.getElementById("scripted").animate([{ opacity: 0 }, { opacity: 1 }], { duration: 100000, easing: "ease-out" });
+      // Only on interaction: a JS animation on hover, a frame-by-frame style loop on hover, a reveal on scroll.
+      const magnet = document.querySelector(".magnet");
+      magnet.addEventListener("mouseenter", () =>
+        magnet.animate([{ transform: "scale(1)" }, { transform: "scale(1.05)" }], { duration: 240, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }),
+      );
+      const glow = document.querySelector(".glow");
+      glow.addEventListener("mouseenter", () => {
+        const start = performance.now();
+        const frame = (now) => {
+          const t = Math.min(1, (now - start) / 300);
+          glow.style.opacity = String(0.5 + t / 2);
+          if (t < 1) requestAnimationFrame(frame);
+        };
+        requestAnimationFrame(frame);
+      });
+      new IntersectionObserver((entries) => entries.forEach((e) => e.isIntersecting && e.target.classList.add("in"))).observe(
+        document.querySelector(".below"),
+      );
     </script>
   </body>
 </html>

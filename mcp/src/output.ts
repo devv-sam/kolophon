@@ -210,9 +210,16 @@ const sameCurve = (a: Bezier, b: Bezier) => a.every((v, i) => Math.abs(v - b[i])
 const overshoots = (b: Bezier) => b[1] < 0 || b[1] > 1 || b[3] < 0 || b[3] > 1;
 const curveText = (b: Bezier) => `cubic-bezier(${b.map(fmt).join(", ")})`;
 
+/** Lists up to `max` names as code, then "and N more". */
+function names(list: string[], max = 8): string {
+  const shown = list.slice(0, max).map((n) => `\`${n}\``).join(", ");
+  return list.length > max ? `${shown} and ${list.length - max} more` : shown;
+}
+
 function describeEasing(easing: string): string {
   const b = bezier(easing);
-  if (!b) return easing;
+  // Springs converted to linear() carry 15-digit stops; 3 decimals keep the shape.
+  if (!b) return easing.replace(/\d+\.\d{4,}/g, (n) => fmt(Number(n)));
   const tw = TAILWIND_EASINGS.find(([curve]) => sameCurve(curve, b));
   if (tw) return `${curveText(b)}, ${tw[2]}`;
   return overshoots(b) ? `${curveText(b)}, overshoots (springy)` : curveText(b);
@@ -228,7 +235,8 @@ function allEasings(m: Motion): string[] {
   const fromUsages = m.keyframes.flatMap((k) =>
     k.usedBy.flatMap((u) => [...(u.resolved ?? u.animation).matchAll(/cubic-bezier\([^)]+\)|\b(?:ease-in-out|ease-in|ease-out|ease|linear)\b/g)].map(([e]) => e)),
   );
-  return [...m.transitions.map((t) => t.easing), ...m.animations.map((a) => a.easing), ...fromUsages];
+  const fromScripts = [...m.scriptAnimations.map((a) => a.easing), ...m.triggered.filter((t) => t.type === "WebAnimation").map((t) => t.easing)];
+  return [...m.transitions.map((t) => t.easing), ...m.animations.map((a) => a.easing), ...fromUsages, ...fromScripts];
 }
 
 /** Distinct curves in use, keyed by their numbers so `cubic-bezier(.4,0,.2,1)` and `(0.4, 0, 0.2, 1)` merge. */
@@ -253,7 +261,11 @@ const ms = (n: number) => `${n}ms`;
 function motionGuidance(m: Motion): string[] {
   const notes: string[] = [];
   const durations = [
-    ...new Set([...m.transitions.map((t) => t.duration), ...m.keyframes.flatMap((k) => k.usedBy.map((u) => firstDuration(u.resolved ?? u.animation) ?? 0))]),
+    ...new Set([
+      ...m.transitions.map((t) => t.duration),
+      ...m.keyframes.flatMap((k) => k.usedBy.map((u) => firstDuration(u.resolved ?? u.animation) ?? 0)),
+      ...m.triggered.filter((t) => t.type === "WebAnimation").map((t) => t.duration),
+    ]),
   ]
     .filter((d) => d > 0)
     .sort((a, b) => a - b);
@@ -270,19 +282,19 @@ function motionGuidance(m: Motion): string[] {
       return curve !== null && overshoots(curve);
     }),
   );
-  if (springy.length) notes.push(`Overshooting (springy) curves give ${springy.map((k) => `\`${k.name}\``).join(", ")} a bounce; keep that curve rather than a plain ease-out.`);
+  if (springy.length) notes.push(`Overshooting (springy) curves give ${names(springy.map((k) => k.name))} a bounce; keep that curve rather than a plain ease-out.`);
 
   const entrances = m.keyframes.filter((k) => k.properties.includes("opacity") && k.usedBy.length && k.usedBy.every((u) => !/infinite/.test(u.animation)));
   const staggered = entrances.filter((k) => k.usedBy.some((u) => /calc\([^)]*\*/.test(u.resolved ?? u.animation)));
   if (entrances.length) {
     const others = [...new Set(entrances.flatMap((k) => k.properties.filter((p) => p !== "opacity")))];
-    let note = `Enter and exit animations (${entrances.map((k) => `\`${k.name}\``).join(", ")}) animate opacity${others.length ? ` together with ${others.join(", ")}` : ""}.`;
-    if (staggered.length) note += ` ${staggered.map((k) => `\`${k.name}\``).join(", ")} stagger${staggered.length === 1 ? "s" : ""} items with a per-index delay (\`calc(… * step)\`).`;
+    let note = `Enter and exit animations (${names(entrances.map((k) => k.name))}) animate opacity${others.length ? ` together with ${others.join(", ")}` : ""}.`;
+    if (staggered.length) note += ` ${names(staggered.map((k) => k.name))} stagger${staggered.length === 1 ? "s" : ""} items with a per-index delay (\`calc(… * step)\`).`;
     notes.push(note);
   }
 
   const loops = m.keyframes.filter((k) => k.usedBy.some((u) => /\binfinite\b/.test(u.animation)));
-  if (loops.length) notes.push(`Looping animations: ${loops.map((k) => `\`${k.name}\``).join(", ")}.`);
+  if (loops.length) notes.push(`Looping animations: ${names(loops.map((k) => k.name))}.`);
 
   if (m.viewTransitions) notes.push("Page navigations use the View Transitions API (`::view-transition-old/new`); replicate them with `document.startViewTransition` or your framework's view transitions.");
 
@@ -292,8 +304,29 @@ function motionGuidance(m: Motion): string[] {
     notes.push("No `prefers-reduced-motion` handling was found. Add it anyway: make animations instant under `reduce`.");
   }
 
-  if (m.scriptAnimations.length) {
-    notes.push(`${m.scriptAnimations.length} animation${m.scriptAnimations.length === 1 ? " runs" : "s run"} from JavaScript (Web Animations API, e.g. Motion); script-driven motion that wasn't running at load isn't captured.`);
+  const scripted = [...m.scriptAnimations.map((a) => ({ duration: a.duration, easing: a.easing })), ...m.triggered.filter((t) => t.type === "WebAnimation")];
+  if (scripted.length) {
+    const timings = [...new Set(scripted.map((a) => `${ms(Math.round(a.duration))} ${describeEasing(a.easing)}`))];
+    notes.push(`Some motion comes from JavaScript (Web Animations API, e.g. Motion), not CSS: ${timings.slice(0, 5).join("; ")}. Match these timings in whatever animation library you use.`);
+  }
+  if (m.triggered.some((t) => /^linear\(.+,.+,.+\)/.test(t.easing))) {
+    notes.push("A `linear(…)` easing with many stops is usually a spring converted to CSS; keep it as is, or use a spring with a similar feel.");
+  }
+
+  const hoverProps = [...new Set(m.triggered.filter((t) => t.trigger === "hover" && t.type === "CSSTransition").map((t) => t.name.replace(/-(top|right|bottom|left)-/, "-")))];
+  if (hoverProps.length) notes.push(`On hover, transitions actually animate: ${hoverProps.join(", ")}.`);
+  const onScroll = [...new Set(m.triggered.filter((t) => t.trigger === "scroll" && t.type === "CSSAnimation").map((t) => t.name))];
+  if (onScroll.length) notes.push(`${names(onScroll)} play${onScroll.length === 1 ? "s" : ""} as elements scroll into view.`);
+
+  for (const st of m.scriptedStyles.slice(0, 3)) {
+    const when = st.trigger === "continuous" ? "continuously" : `on ${st.trigger}`;
+    notes.push(`\`${st.element}\` is animated frame by frame from JavaScript ${when} (${st.properties.join(", ")}, ${st.writes} updates over ${ms(st.span)}). Its curve isn't in the CSS; recreate it with a JS animation or a CSS transition of similar length.`);
+  }
+
+  if (m.interaction.ran && !m.interaction.completed) {
+    notes.push(`The scroll-and-hover pass stopped early (${m.interaction.note}), so motion triggered by interaction may be incomplete. Everything visible at load is still included.`);
+  } else if (!m.interaction.ran) {
+    notes.push("Scrolling and hovering were skipped, so motion that only starts on interaction isn't included.");
   }
   return [...new Set(notes)];
 }
@@ -325,6 +358,25 @@ export function motionToDesignMd(m: Motion, page: { url: string; title: string }
     }
   } else lines.push("None found.");
 
+  lines.push("", "## Triggered by interaction", "");
+  if (!m.interaction.ran) lines.push("Skipped.");
+  else {
+    lines.push(
+      `Kolophon scrolled ${m.interaction.scrolledPx}px and hovered ${m.interaction.hovered} controls${m.interaction.completed ? "" : ` before stopping early: ${m.interaction.note}`}.`,
+      "",
+    );
+    if (m.triggered.length) {
+      lines.push("| Trigger | Type | Animation | Duration | Easing | Count |", "| --- | --- | --- | --- | --- | --- |");
+      for (const t of m.triggered.slice(0, MAX_STYLES)) {
+        lines.push(`| ${t.trigger} | ${t.type} | ${t.name ? `\`${cell(t.name)}\`` : "—"} | ${ms(t.duration)} | ${cell(describeEasing(t.easing)).slice(0, 160)} | ${t.count} |`);
+      }
+    } else lines.push("No animations started.");
+    if (m.scriptedStyles.length) {
+      lines.push("", "Animated frame by frame from JavaScript:", "", "| Element | Trigger | Properties | Updates | Over |", "| --- | --- | --- | --- | --- |");
+      for (const st of m.scriptedStyles) lines.push(`| \`${cell(st.element)}\` | ${st.trigger} | ${st.properties.join(", ")} | ${st.writes} | ${ms(st.span)} |`);
+    }
+  }
+
   lines.push("", "## Reduced motion", "");
   lines.push(
     m.reducedMotion.reduce.length
@@ -343,7 +395,7 @@ export function motionToDesignMd(m: Motion, page: { url: string; title: string }
 export function motionToTokens(m: Motion): object {
   const curves = distinctCurves(m);
   const durationTokens = Object.fromEntries(
-    [...new Set(m.transitions.map((t) => t.duration))].sort((a, b) => a - b).map((d) => [String(d), { $type: "duration", $value: { value: d, unit: "ms" } }]),
+    [...new Set([...m.transitions.map((t) => t.duration), ...m.triggered.filter((t) => t.type === "WebAnimation").map((t) => t.duration)])].sort((a, b) => a - b).map((d) => [String(d), { $type: "duration", $value: { value: d, unit: "ms" } }]),
   );
   const easing = Object.fromEntries(curves.map((c) => [c.slug, { $type: "cubicBezier", $value: c.curve }]));
   const transitionSlugs = uniqueSlugs(m.transitions.slice(0, MAX_STYLES), (t) => `${slug(t.property)}-${t.duration}`);
@@ -371,7 +423,7 @@ export function motionToTailwind(m: Motion): string {
   const lines = ["@theme {"];
   // Tailwind already ships `ease-linear`.
   for (const c of distinctCurves(m).filter((c) => c.slug !== "css-linear")) lines.push(`  --ease-${c.slug}: ${curveText(c.curve)};`);
-  const used = m.keyframes.filter((k) => k.usedBy.length);
+  const used = m.keyframes.filter((k) => k.usedBy.length).slice(0, MAX_STYLES);
   for (const k of used) lines.push(`  --animate-${slug(k.name)}: ${k.usedBy[0].resolved ?? k.usedBy[0].animation};`);
   for (const k of used) lines.push("", `  @keyframes ${k.name} {`, `    ${k.css}`, "  }");
   lines.push("}");
