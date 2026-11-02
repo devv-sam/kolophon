@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { launch, type LaunchedChrome } from "chrome-launcher";
-import puppeteer, { type Browser, type Page } from "puppeteer-core";
+import puppeteer, { type Browser, type CDPSession, type Page } from "puppeteer-core";
 
 let chrome: LaunchedChrome | undefined;
 let browser: Promise<Browser> | undefined;
@@ -50,4 +50,26 @@ export async function withPage<T>(url: string, fn: (page: Page) => Promise<T>): 
 // disconnect first can outlive the client's shutdown grace period and orphan Chrome.
 export function closeBrowser(): void {
   chrome?.kill();
+}
+
+/**
+ * Enables the CSS domain and returns every stylesheet's text with its URL. Reading over CDP
+ * works for cross-origin sheets (CDNs, Google Fonts) that the page itself isn't allowed to read.
+ */
+export async function readStyleSheets(cdp: CDPSession, page: Page): Promise<{ url: string; text: string }[]> {
+  await cdp.send("DOM.enable"); // CSS.enable requires it.
+  // CSS.enable announces every existing stylesheet before it resolves.
+  const sheets: { id: string; url: string }[] = [];
+  cdp.on("CSS.styleSheetAdded", ({ header }) => sheets.push({ id: header.styleSheetId, url: header.sourceURL || page.url() }));
+  await cdp.send("CSS.enable");
+  const texts = [];
+  for (const sheet of sheets) {
+    try {
+      const { text } = await cdp.send("CSS.getStyleSheetText", { styleSheetId: sheet.id });
+      texts.push({ url: sheet.url, text });
+    } catch {
+      // A sheet removed since it was announced has no text; skip it.
+    }
+  }
+  return texts;
 }
