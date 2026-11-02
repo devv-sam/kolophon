@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Motion fixture</title>
+    <link rel="stylesheet" href="motion.css" />
+    <style>
+      :root { --rise-dur: 700ms; --rise-ease: cubic-bezier(.16,1,.3,1); }
+      .btn { transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1); }
+      .card { transition: transform 300ms ease-out, opacity 300ms ease-out 50ms; }
+      @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+      .reveal { animation: rise var(--rise-dur) var(--rise-ease) calc(var(--i, 0) * 80ms) both; }
+      @keyframes pop { 0% { transform: scale(1); } 50% { transform: scale(1.2); animation-timing-function: ease-in; } 100% { transform: scale(1); } }
+      .like:hover { animation: pop .45s cubic-bezier(.34,1.56,.64,1); }
+      @media (prefers-reduced-motion: reduce) { .reveal { animation: none; } }
+    </style>
+  </head>
+  <body>
+    <button class="btn">One</button>
+    <button class="btn">Two</button>
+    <div class="card">Card</div>
+    <div class="reveal">Rises in</div>
+    <span class="like">Like</span>
+    <div class="spinner">Loading</div>
+    <p id="scripted">Faded in from JavaScript</p>
+    <script>
+      document.getElementById("scripted").animate([{ opacity: 0 }, { opacity: 1 }], { duration: 100000, easing: "ease-out" });
+    </script>
+  </body>
+</html>

@@ -1,3 +1,4 @@
+import type { Motion } from "./motion.js";
 import type { FontFamily, TextStyle, Typography } from "./typography.js";
 
 // shortcut: only the 12 most-used styles go into the outputs; raise it if agents miss real styles.
@@ -175,6 +176,204 @@ export function toTailwind(t: Typography): string {
     if (s.letterSpacing !== "normal") lines.push(`  ${name}--letter-spacing: ${s.letterSpacing};`);
     lines.push(`  ${name}--font-weight: ${s.weight};`);
   }
+  lines.push("}");
+  return lines.join("\n");
+}
+
+// ---- Motion ----
+
+type Bezier = [number, number, number, number];
+
+const KEYWORD_EASINGS: Record<string, Bezier> = {
+  ease: [0.25, 0.1, 0.25, 1],
+  "ease-in": [0.42, 0, 1, 1],
+  "ease-out": [0, 0, 0.58, 1],
+  "ease-in-out": [0.42, 0, 0.58, 1],
+  linear: [0, 0, 1, 1],
+};
+
+// Tailwind's built-in curves, so agents can use the class instead of an arbitrary value.
+const TAILWIND_EASINGS: [Bezier, string, string][] = [
+  [[0.4, 0, 0.2, 1], "standard", "Tailwind `ease-in-out` (also the default for `transition`)"],
+  [[0, 0, 0.2, 1], "standard-out", "Tailwind `ease-out`"],
+  [[0.4, 0, 1, 1], "standard-in", "Tailwind `ease-in`"],
+];
+
+function bezier(easing: string): Bezier | null {
+  if (KEYWORD_EASINGS[easing]) return KEYWORD_EASINGS[easing];
+  const m = easing.match(/cubic-bezier\(([^)]+)\)/);
+  const n = m?.[1].split(",").map(Number);
+  return n?.length === 4 && n.every(Number.isFinite) ? (n as Bezier) : null;
+}
+
+const sameCurve = (a: Bezier, b: Bezier) => a.every((v, i) => Math.abs(v - b[i]) < 0.001);
+const overshoots = (b: Bezier) => b[1] < 0 || b[1] > 1 || b[3] < 0 || b[3] > 1;
+const curveText = (b: Bezier) => `cubic-bezier(${b.map(fmt).join(", ")})`;
+
+function describeEasing(easing: string): string {
+  const b = bezier(easing);
+  if (!b) return easing;
+  const tw = TAILWIND_EASINGS.find(([curve]) => sameCurve(curve, b));
+  if (tw) return `${curveText(b)}, ${tw[2]}`;
+  return overshoots(b) ? `${curveText(b)}, overshoots (springy)` : curveText(b);
+}
+
+/** First duration in an animation shorthand, in ms. */
+function firstDuration(animation: string): number | null {
+  const m = animation.match(/(?:^|[\s(])(\d*\.?\d+)(ms|s)(?=$|[\s,)])/);
+  return m ? Math.round(parseFloat(m[1]) * (m[2] === "ms" ? 1 : 1000)) : null;
+}
+
+function allEasings(m: Motion): string[] {
+  const fromUsages = m.keyframes.flatMap((k) =>
+    k.usedBy.flatMap((u) => [...(u.resolved ?? u.animation).matchAll(/cubic-bezier\([^)]+\)|\b(?:ease-in-out|ease-in|ease-out|ease|linear)\b/g)].map(([e]) => e)),
+  );
+  return [...m.transitions.map((t) => t.easing), ...m.animations.map((a) => a.easing), ...fromUsages];
+}
+
+/** Distinct curves in use, keyed by their numbers so `cubic-bezier(.4,0,.2,1)` and `(0.4, 0, 0.2, 1)` merge. */
+function distinctCurves(m: Motion): { curve: Bezier; easing: string; slug: string }[] {
+  const curves: { curve: Bezier; easing: string; slug: string }[] = [];
+  let custom = 0;
+  let springy = 0;
+  for (const easing of allEasings(m)) {
+    const curve = bezier(easing);
+    if (!curve || curves.some((c) => sameCurve(c.curve, curve))) continue;
+    const keyword = Object.entries(KEYWORD_EASINGS).find(([, b]) => sameCurve(b, curve))?.[0];
+    const tw = TAILWIND_EASINGS.find(([b]) => sameCurve(b, curve));
+    // CSS keywords get a prefix: Tailwind's own `ease-in-out` etc. are different curves.
+    const slug = (keyword && `css-${keyword}`) ?? tw?.[1] ?? (overshoots(curve) ? `spring-${++springy}` : `curve-${++custom}`);
+    curves.push({ curve, easing, slug });
+  }
+  return curves;
+}
+
+const ms = (n: number) => `${n}ms`;
+
+function motionGuidance(m: Motion): string[] {
+  const notes: string[] = [];
+  const durations = [
+    ...new Set([...m.transitions.map((t) => t.duration), ...m.keyframes.flatMap((k) => k.usedBy.map((u) => firstDuration(u.resolved ?? u.animation) ?? 0))]),
+  ]
+    .filter((d) => d > 0)
+    .sort((a, b) => a - b);
+  if (durations.length) notes.push(`Durations in use: ${durations.map(ms).join(", ")}.`);
+
+  const main = m.transitions[0];
+  if (main) {
+    notes.push(`The default UI transition is \`${main.property}\` over ${ms(main.duration)} with ${describeEasing(main.easing)}, on ${main.elements} element${main.elements === 1 ? "" : "s"}. Use it for hover and state changes.`);
+  }
+
+  const springy = m.keyframes.filter((k) =>
+    k.usedBy.some((u) => {
+      const curve = bezier((u.resolved ?? u.animation).match(/cubic-bezier\([^)]+\)/)?.[0] ?? "");
+      return curve !== null && overshoots(curve);
+    }),
+  );
+  if (springy.length) notes.push(`Overshooting (springy) curves give ${springy.map((k) => `\`${k.name}\``).join(", ")} a bounce; keep that curve rather than a plain ease-out.`);
+
+  const entrances = m.keyframes.filter((k) => k.properties.includes("opacity") && k.usedBy.length && k.usedBy.every((u) => !/infinite/.test(u.animation)));
+  const staggered = entrances.filter((k) => k.usedBy.some((u) => /calc\([^)]*\*/.test(u.resolved ?? u.animation)));
+  if (entrances.length) {
+    const others = [...new Set(entrances.flatMap((k) => k.properties.filter((p) => p !== "opacity")))];
+    let note = `Enter and exit animations (${entrances.map((k) => `\`${k.name}\``).join(", ")}) animate opacity${others.length ? ` together with ${others.join(", ")}` : ""}.`;
+    if (staggered.length) note += ` ${staggered.map((k) => `\`${k.name}\``).join(", ")} stagger${staggered.length === 1 ? "s" : ""} items with a per-index delay (\`calc(… * step)\`).`;
+    notes.push(note);
+  }
+
+  const loops = m.keyframes.filter((k) => k.usedBy.some((u) => /\binfinite\b/.test(u.animation)));
+  if (loops.length) notes.push(`Looping animations: ${loops.map((k) => `\`${k.name}\``).join(", ")}.`);
+
+  if (m.viewTransitions) notes.push("Page navigations use the View Transitions API (`::view-transition-old/new`); replicate them with `document.startViewTransition` or your framework's view transitions.");
+
+  if (m.reducedMotion.reduce.length) {
+    notes.push(`Under \`prefers-reduced-motion: reduce\` the site switches off motion for ${m.reducedMotion.reduce.slice(0, 6).map((s) => `\`${s}\``).join(", ")}${m.reducedMotion.reduce.length > 6 ? ", …" : ""}. Do the same for every animation you add.`);
+  } else if (m.keyframes.length || m.transitions.length) {
+    notes.push("No `prefers-reduced-motion` handling was found. Add it anyway: make animations instant under `reduce`.");
+  }
+
+  if (m.scriptAnimations.length) {
+    notes.push(`${m.scriptAnimations.length} animation${m.scriptAnimations.length === 1 ? " runs" : "s run"} from JavaScript (Web Animations API, e.g. Motion); script-driven motion that wasn't running at load isn't captured.`);
+  }
+  return [...new Set(notes)];
+}
+
+/** The motion section of a DESIGN.md: transitions, keyframes, reduced motion, then agent guidance. */
+export function motionToDesignMd(m: Motion, page: { url: string; title: string }): string {
+  const lines = [
+    `# Motion — ${page.title || page.url}`,
+    "",
+    `Extracted by kolophon from ${page.url}. Transitions are computed values; keyframes and their timing come from the stylesheets, with CSS variables resolved.`,
+    "",
+    "## Transitions",
+    "",
+  ];
+  if (m.transitions.length) {
+    lines.push("| Property | Duration | Easing | Delay | Elements | Used on |", "| --- | --- | --- | --- | --- | --- |");
+    for (const t of m.transitions.slice(0, MAX_STYLES)) {
+      lines.push(`| ${cell(t.property)} | ${ms(t.duration)} | ${cell(describeEasing(t.easing))} | ${ms(t.delay)} | ${t.elements} | ${t.tags.join(", ")} |`);
+    }
+  } else lines.push("None found at load.");
+
+  lines.push("", "## Keyframe animations", "");
+  if (m.keyframes.length) {
+    lines.push("| Name | Animates | Used by | Timing |", "| --- | --- | --- | --- |");
+    for (const k of m.keyframes) {
+      const used = k.usedBy[0];
+      const more = k.usedBy.length > 1 ? ` (+${k.usedBy.length - 1})` : "";
+      lines.push(`| \`${k.name}\` | ${k.properties.join(", ")} | ${used ? `\`${cell(used.selector)}\`${more}` : "—"} | ${used ? `\`${cell(used.resolved ?? used.animation)}\`` : "—"} |`);
+    }
+  } else lines.push("None found.");
+
+  lines.push("", "## Reduced motion", "");
+  lines.push(
+    m.reducedMotion.reduce.length
+      ? `Restyled under \`prefers-reduced-motion: reduce\`: ${m.reducedMotion.reduce.map((s) => `\`${cell(s)}\``).join(", ")}.`
+      : "No `prefers-reduced-motion: reduce` rules found.",
+  );
+  if (m.reducedMotion.noPreference.length) {
+    lines.push("", `Only animated under \`no-preference\`: ${m.reducedMotion.noPreference.map((s) => `\`${cell(s)}\``).join(", ")}.`);
+  }
+
+  lines.push("", "## Agent guidance", "", ...motionGuidance(m).map((n) => `- ${n}`), "");
+  return lines.join("\n");
+}
+
+/** W3C Design Tokens (DTCG): durations, easing curves and the main transitions. */
+export function motionToTokens(m: Motion): object {
+  const curves = distinctCurves(m);
+  const durationTokens = Object.fromEntries(
+    [...new Set(m.transitions.map((t) => t.duration))].sort((a, b) => a - b).map((d) => [String(d), { $type: "duration", $value: { value: d, unit: "ms" } }]),
+  );
+  const easing = Object.fromEntries(curves.map((c) => [c.slug, { $type: "cubicBezier", $value: c.curve }]));
+  const transitionSlugs = uniqueSlugs(m.transitions.slice(0, MAX_STYLES), (t) => `${slug(t.property)}-${t.duration}`);
+  const transition = Object.fromEntries(
+    [...transitionSlugs].map(([t, s]) => {
+      const curve = curves.find((c) => bezier(t.easing) && sameCurve(c.curve, bezier(t.easing)!));
+      return [
+        s,
+        {
+          $type: "transition",
+          $value: {
+            duration: { value: t.duration, unit: "ms" },
+            delay: { value: t.delay, unit: "ms" },
+            timingFunction: curve ? `{easing.${curve.slug}}` : [0, 0, 1, 1],
+          },
+        },
+      ];
+    }),
+  );
+  return { duration: durationTokens, easing, transition };
+}
+
+/** Tailwind v4 `@theme` block: easing curves, then each keyframes animation with its timing. */
+export function motionToTailwind(m: Motion): string {
+  const lines = ["@theme {"];
+  // Tailwind already ships `ease-linear`.
+  for (const c of distinctCurves(m).filter((c) => c.slug !== "css-linear")) lines.push(`  --ease-${c.slug}: ${curveText(c.curve)};`);
+  const used = m.keyframes.filter((k) => k.usedBy.length);
+  for (const k of used) lines.push(`  --animate-${slug(k.name)}: ${k.usedBy[0].resolved ?? k.usedBy[0].animation};`);
+  for (const k of used) lines.push("", `  @keyframes ${k.name} {`, `    ${k.css}`, "  }");
   lines.push("}");
   return lines.join("\n");
 }

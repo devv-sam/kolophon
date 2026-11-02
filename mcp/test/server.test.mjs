@@ -40,9 +40,9 @@ after(async () => {
   http?.close();
 });
 
-test("lists get_typography", async () => {
+test("lists both tools", async () => {
   const { tools } = await client.listTools();
-  assert.ok(tools.some((t) => t.name === "get_typography"));
+  assert.deepEqual(tools.map((t) => t.name).sort(), ["get_motion", "get_typography"]);
 });
 
 test("reads a page served locally", async () => {
@@ -133,6 +133,37 @@ test("returns DESIGN.md, tokens and Tailwind", async () => {
 
   assert.match(tailwind, /^@theme \{\n {2}--font-arial: Arial, sans-serif;/);
   assert.match(tailwind, /--text-14-500--letter-spacing: 0\.5px;/);
+});
+
+test("extracts motion", async () => {
+  const res = await client.callTool({ name: "get_motion", arguments: { url: `${base}motion.html` } });
+  assert.ok(!res.isError, res.content[0].text);
+  const [designMd, , tailwind] = res.content.map((c) => c.text);
+  const m = raw(res);
+
+  const transition = (property) => m.transitions.find((t) => t.property === property);
+  assert.deepEqual(transition("background-color"), {
+    property: "background-color", duration: 150, easing: "cubic-bezier(0.4, 0, 0.2, 1)", delay: 0, elements: 2, tags: ["button"],
+  });
+  assert.equal(transition("opacity").delay, 50);
+  assert.equal(transition("transform").easing, "ease-out");
+
+  const kf = Object.fromEntries(m.keyframes.map((k) => [k.name, k]));
+  assert.deepEqual(kf.rise.properties, ["opacity", "transform"]);
+  assert.equal(kf.rise.usedBy[0].selector, ".reveal");
+  assert.match(kf.rise.usedBy[0].resolved, /^rise 700ms cubic-bezier\(\.16,1,\.3,1\) calc\( ?0 \* 80ms ?\) both$/);
+  assert.deepEqual(kf.pop.properties, ["transform"], "per-step easing isn't an animated property");
+  assert.equal(kf.spin.usedBy[0].selector, ".spinner", "keyframes in a linked stylesheet are read");
+
+  assert.deepEqual(m.reducedMotion.reduce, [".reveal"]);
+  assert.deepEqual(m.animations.map((a) => a.name).sort(), ["rise", "spin"]);
+  assert.deepEqual(m.scriptAnimations, [{ duration: 100000, easing: "ease-out", properties: ["opacity"] }]);
+
+  assert.match(designMd, /^# Motion — Motion fixture/);
+  assert.match(designMd, /Overshooting \(springy\) curves give `pop` a bounce/);
+  assert.match(designMd, /switches off motion for `\.reveal`/);
+  assert.match(tailwind, /--ease-spring-1: cubic-bezier\(0\.34, 1\.56, 0\.64, 1\);/);
+  assert.match(tailwind, /@keyframes spin \{/);
 });
 
 test("rejects non-http URLs", async () => {

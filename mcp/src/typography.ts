@@ -1,4 +1,5 @@
 import type { Page } from "puppeteer-core";
+import { readStyleSheets } from "./browser.js";
 import { readFontFile, type FontAxis } from "./fontfile.js";
 
 export interface TextStyle {
@@ -151,23 +152,13 @@ export async function getTypography(page: Page): Promise<Typography> {
   const cdp = await page.createCDPSession();
   try {
     await cdp.send("DOM.enable");
-    // CSS.enable announces every existing stylesheet. Reading their text over CDP works for
-    // cross-origin sheets (CDNs, Google Fonts) that the page itself isn't allowed to read.
-    const sheets: { id: string; url: string }[] = [];
-    cdp.on("CSS.styleSheetAdded", ({ header }) => sheets.push({ id: header.styleSheetId, url: header.sourceURL || page.url() }));
-    await cdp.send("CSS.enable");
-    for (const sheet of sheets) {
-      try {
-        const { text } = await cdp.send("CSS.getStyleSheetText", { styleSheetId: sheet.id });
-        for (const [block] of text.matchAll(/@font-face\s*\{[^}]*\}/g)) {
-          const family = block.match(/font-family\s*:\s*['"]?([^'";}]+)/)?.[1].trim().toLowerCase();
-          if (!family) continue;
-          for (const [, url] of block.matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/g)) {
-            fontFileFamilies.set(new URL(url, sheet.url).href, family);
-          }
+    for (const sheet of await readStyleSheets(cdp, page)) {
+      for (const [block] of sheet.text.matchAll(/@font-face\s*\{[^}]*\}/g)) {
+        const family = block.match(/font-family\s*:\s*['"]?([^'";}]+)/)?.[1].trim().toLowerCase();
+        if (!family) continue;
+        for (const [, url] of block.matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/g)) {
+          fontFileFamilies.set(new URL(url, sheet.url).href, family);
         }
-      } catch {
-        // A sheet removed since it was announced has no text; skip it.
       }
     }
     const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
