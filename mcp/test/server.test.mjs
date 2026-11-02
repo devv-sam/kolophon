@@ -19,6 +19,8 @@ async function connect(env) {
 }
 
 const typography = (c, url) => c.callTool({ name: "get_typography", arguments: { url } });
+// The raw extraction is the last content item, after DESIGN.md, tokens.json and the Tailwind block.
+const raw = (res) => JSON.parse(res.content.at(-1).text);
 
 before(async () => {
   http = createServer(async (req, res) => {
@@ -46,13 +48,13 @@ test("lists get_typography", async () => {
 test("reads a page served locally", async () => {
   const res = await typography(client, `${base}basic.html`);
   assert.ok(!res.isError, res.content[0].text);
-  assert.equal(JSON.parse(res.content[0].text).title, "Kolophon fixture");
+  assert.equal(raw(res).title, "Kolophon fixture");
 });
 
 test("groups the rendered text styles", async () => {
   const res = await typography(client, `${base}typography.html`);
   assert.ok(!res.isError, res.content[0].text);
-  const { styles, families } = JSON.parse(res.content[0].text);
+  const { styles, families } = raw(res);
 
   assert.equal(styles.length, 3, "hidden span must not add a style");
   assert.ok(!styles.some((s) => s.size === "50px"));
@@ -72,7 +74,7 @@ test("groups the rendered text styles", async () => {
 test("reports which fonts actually rendered", async () => {
   const res = await typography(client, `${base}fonts.html`);
   assert.ok(!res.isError, res.content[0].text);
-  const families = Object.fromEntries(JSON.parse(res.content[0].text).families.map((f) => [f.name, f]));
+  const families = Object.fromEntries(raw(res).families.map((f) => [f.name, f]));
 
   const web = families["Fixture Sans"];
   assert.equal(web.webFont, true);
@@ -97,7 +99,7 @@ test("reports which fonts actually rendered", async () => {
 test("reports variable font axes", async () => {
   const res = await typography(client, `${base}fonts.html`);
   assert.ok(!res.isError, res.content[0].text);
-  const { families, styles } = JSON.parse(res.content[0].text);
+  const { families, styles } = raw(res);
   const byName = Object.fromEntries(families.map((f) => [f.name, f]));
 
   const variable = byName["Fixture Variable"];
@@ -107,6 +109,30 @@ test("reports variable font axes", async () => {
 
   assert.equal(byName["Fixture Sans"].variable, false);
   assert.deepEqual(byName["Fixture Sans"].axes, []);
+});
+
+test("returns DESIGN.md, tokens and Tailwind", async () => {
+  const res = await typography(client, `${base}typography.html`);
+  assert.ok(!res.isError, res.content[0].text);
+  const [designMd, tokens, tailwind] = res.content.map((c) => c.text);
+
+  assert.match(designMd, /^# Typography — Typography fixture/);
+  // CI's Linux has no Arial and renders Liberation Sans, so it's "local" or "local, **not installed**".
+  assert.match(designMd, /\| Arial \| \d+% \| local[ ,]/);
+  assert.match(designMd, /## Agent guidance\n\n- Primary font is \*\*Arial\*\*/);
+
+  const { font, typography: styles } = JSON.parse(tokens);
+  assert.deepEqual(font.family.georgia, { $type: "fontFamily", $value: ["Georgia", "serif"] });
+  assert.deepEqual(styles["16-400"].$value, {
+    fontFamily: "{font.family.arial}",
+    fontSize: { value: 16, unit: "px" },
+    fontWeight: 400,
+    letterSpacing: { value: 0, unit: "px" },
+    lineHeight: 1.5,
+  });
+
+  assert.match(tailwind, /^@theme \{\n {2}--font-arial: Arial, sans-serif;/);
+  assert.match(tailwind, /--text-14-500--letter-spacing: 0\.5px;/);
 });
 
 test("rejects non-http URLs", async () => {
