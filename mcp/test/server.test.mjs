@@ -117,7 +117,8 @@ test("returns DESIGN.md, tokens and Tailwind", async () => {
   const [designMd, tokens, tailwind] = res.content.map((c) => c.text);
 
   assert.match(designMd, /^# Typography — Typography fixture/);
-  assert.match(designMd, /\| Arial \| \d+% \| local \|/);
+  // CI's Linux has no Arial and renders Liberation Sans, so it's "local" or "local, **not installed**".
+  assert.match(designMd, /\| Arial \| \d+% \| local[ ,]/);
   assert.match(designMd, /## Agent guidance\n\n- Primary font is \*\*Arial\*\*/);
 
   const { font, typography: styles } = JSON.parse(tokens);
