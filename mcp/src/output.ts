@@ -79,7 +79,11 @@ function guidance(t: Typography, p: ReturnType<typeof prepare>): string[] {
 
   for (const f of t.families.filter((f) => f.fallback)) {
     const used = f.rendered.map((r) => r.name).join(", ") || "a fallback";
-    notes.push(`**${f.name}** did not render on this page; ${used} was used instead. Don't copy \`${f.name}\` without its font files, or the result will differ from the declared design.`);
+    notes.push(
+      f.webFont
+        ? `**${f.name}** failed to load on this page, so ${used} rendered instead. Ship its font files (or the same font service) when you use it, or the result will differ from the declared design.`
+        : `**${f.name}** isn't installed on the machine that extracted this, so ${used} rendered instead. It's a system font: keep it in the stack, but the measurements above came from ${used}.`,
+    );
   }
 
   const tracked = p.styles.filter((s) => s.letterSpacing !== "normal" && px(s.letterSpacing) !== 0);
