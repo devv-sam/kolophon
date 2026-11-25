@@ -1,6 +1,6 @@
 {
   "name": "kolophon",
-  "description": "Design context for AI coding agents: typography, computed styles, and motion extracted from any URL. Ships today as a Chrome font inspector.",
+  "description": "Design context for AI coding agents.",
   "private": true,
   "version": "2.0.0-alpha.0",
   "type": "module",
@@ -17,25 +17,6 @@
   "homepage": "https://github.com/devv-sam/kolophon#readme",
   "bugs": "https://github.com/devv-sam/kolophon/issues",
   "scripts": {
-    "dev": "wxt",
-    "dev:firefox": "wxt -b firefox",
-    "build": "wxt build",
-    "build:firefox": "wxt build -b firefox",
-    "zip": "wxt zip",
-    "zip:firefox": "wxt zip -b firefox",
-    "compile": "tsc --noEmit",
-    "postinstall": "wxt prepare"
-  },
-  "dependencies": {
-    "lucide": "^1.3.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
-  },
-  "devDependencies": {
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@wxt-dev/module-react": "^1.1.5",
-    "typescript": "^5.9.3",
-    "wxt": "^0.20.26"
+    "compile": "pnpm --filter @kolophon/mcp compile"
   }
 }
