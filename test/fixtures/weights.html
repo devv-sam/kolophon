@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Weights fixture</title>
+    <style>
+      /* Font licenses: fonts/LICENSE.txt and fonts/Inter-LICENSE.txt (SIL Open Font License 1.1) */
+      @font-face { font-family: "Regular Only"; src: url(fonts/Ronzino-Regular.woff2) format("woff2"); }
+      @font-face { font-family: "Range"; src: url(fonts/InterVariable.woff2) format("woff2"); font-weight: 100 900; }
+      @font-face { font-family: "Lost Range"; src: url(fonts/InterVariable.woff2) format("woff2"); font-weight: 400; }
+      @font-face { font-family: "Bold Face"; src: url(fonts/InterVariable.woff2) format("woff2"); font-weight: bold; }
+      @font-face { font-family: "Broken Font"; src: url(fonts/missing.woff2) format("woff2"); }
+      p { margin: 0; }
+      #regular { font: 400 16px "Regular Only"; }
+      #faked { font: 600 16px "Regular Only"; }
+      #range { font: 450 16px "Range"; }
+      #lost { font: 600 16px "Lost Range"; }
+      #bold { font: 700 16px "Bold Face"; }
+      #italic { font: italic 400 16px "Regular Only"; }
+      #system { font: 600 16px serif; }
+      #broken { font: 400 16px "Broken Font", serif; }
+    </style>
+  </head>
+  <body>
+    <p id="regular">Covered</p>
+    <p id="faked">Faked bold</p>
+    <p id="range">In the range</p>
+    <p id="lost">Range not declared</p>
+    <p id="bold">Declared bold</p>
+    <p id="italic">No italic face</p>
+    <p id="system">System font</p>
+    <p id="broken">Not loaded</p>
+  </body>
+</html>

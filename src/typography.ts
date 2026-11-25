@@ -1,4 +1,4 @@
-import type { CDPSession, Page } from "puppeteer-core";
+import type { CDPSession, Page, Protocol } from "puppeteer-core";
 import { readStyleSheets } from "./browser.js";
 import { readFontFile, type FontAxis } from "./fontfile.js";
 
@@ -30,6 +30,11 @@ export interface TextStyle {
   rendered: RenderedFont[];
   /** Glyphs drawn by something other than the first family in the stack; null when Chrome reported no fonts. */
   fallbackGlyphs: number | null;
+  /**
+   * False when no loaded face of the web font declares this weight, so Chrome drew another weight or faked it.
+   * Null when the first family isn't a web font or none of it loaded.
+   */
+  weightCovered: boolean | null;
 }
 
 /** One `@font-face` from `document.fonts`. `unloaded` means declared but never used. */
@@ -61,12 +66,12 @@ export interface Typography {
 }
 
 type PageFamily = Pick<FontFamily, "name" | "stack" | "chars">;
-type PageStyle = Omit<TextStyle, "rendered" | "fallbackGlyphs">;
+type PageStyle = Omit<TextStyle, "rendered" | "fallbackGlyphs" | "weightCovered">;
 type PageTypography = {
   families: PageFamily[];
   styles: PageStyle[];
   faces: Record<string, FontFaceInfo[]>;
-  /** For each collected text node, the index of its style. */
+  /** For each collected text node or form control, the index of its style. */
   nodeStyles: number[];
 };
 
@@ -74,8 +79,8 @@ type PageTypography = {
  * Runs inside the page, where only this function's source is sent,
  * so everything it uses must be defined in its body.
  */
-// shortcut: skips shadow roots, iframes, pseudo-element text and form values; add them when apps rely on them.
-function extractTypography(): { data: PageTypography; nodes: Text[] } {
+// shortcut: skips shadow roots, iframes, ::before/::after text and typed passwords; add them when apps rely on them.
+function extractTypography(): { data: PageTypography; nodes: (Text | Element)[] } {
   const clean = (name: string) => name.trim().replace(/['"]/g, "");
 
   const textByElement = new Map<Element, Text[]>();
@@ -106,13 +111,10 @@ function extractTypography(): { data: PageTypography; nodes: Text[] } {
     return parts.join(" > ");
   };
 
-  const styles = new Map<string, PageStyle & { nodes: Text[] }>();
+  const styles = new Map<string, PageStyle & { nodes: (Text | Element)[] }>();
   const families = new Map<string, PageFamily>();
-  for (const [el, nodes] of textByElement) {
-    if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
-    if (el.closest("script, style, noscript, template")) continue;
-    const text = nodes.map((n) => n.data.trim()).join(" ");
-    const s = getComputedStyle(el);
+  const add = (el: Element, pseudo: string, chars: number, sample: string, nodes: (Text | Element)[]) => {
+    const s = getComputedStyle(el, pseudo || null);
     const key = [s.fontFamily, s.fontWeight, s.fontSize, s.lineHeight, s.letterSpacing, s.fontStyle, s.fontVariationSettings].join("|");
     let group = styles.get(key);
     if (!group) {
@@ -127,15 +129,15 @@ function extractTypography(): { data: PageTypography; nodes: Text[] } {
         elements: 0,
         chars: 0,
         tags: [],
-        sample: text.slice(0, 40),
-        selector: selectorOf(el),
+        sample: sample.slice(0, 40),
+        selector: selectorOf(el) + pseudo,
         nodes: [],
       };
       styles.set(key, group);
     }
-    const tag = el.tagName.toLowerCase();
+    const tag = el.tagName.toLowerCase() + pseudo;
     group.elements++;
-    group.chars += text.length;
+    group.chars += chars;
     group.nodes.push(...nodes);
     if (group.tags.length < 5 && !group.tags.includes(tag)) group.tags.push(tag);
 
@@ -144,7 +146,37 @@ function extractTypography(): { data: PageTypography; nodes: Text[] } {
       family = { name: clean(s.fontFamily.split(",")[0]), stack: s.fontFamily, chars: 0 };
       families.set(s.fontFamily, family);
     }
-    family.chars += text.length;
+    family.chars += chars;
+  };
+
+  const visible = (el: Element) => el.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+  for (const [el, nodes] of textByElement) {
+    // A textarea's child text is only its default value; the control itself is read below.
+    if (!visible(el) || el.closest("script, style, noscript, template, textarea")) continue;
+    const text = nodes.map((n) => n.data.trim()).join(" ");
+    add(el, "", text.length, text, nodes);
+  }
+
+  // Types that paint no text of their own, or (file) text in two fonts.
+  const TEXTLESS = new Set(["hidden", "checkbox", "radio", "range", "color", "file", "image"]);
+  // Types that paint text even when their value is empty.
+  const ALWAYS_PAINTED = new Set(["submit", "reset", "date", "time", "datetime-local", "month", "week"]);
+  for (const el of document.querySelectorAll("input, textarea, select")) {
+    if (!visible(el)) continue;
+    if (el instanceof HTMLSelectElement) {
+      const label = el.selectedOptions[0]?.label ?? "";
+      // Options of a list box are text nodes, already read above.
+      if (label && !el.multiple && el.size <= 1) add(el, "", label.length, label, [el]);
+      continue;
+    }
+    const field = el as HTMLInputElement | HTMLTextAreaElement;
+    if (TEXTLESS.has(field.type)) continue;
+    if (!field.value && field.placeholder) add(el, "::placeholder", field.placeholder.length, field.placeholder, [el]);
+    else if (field.type !== "password" && (field.value || ALWAYS_PAINTED.has(field.type))) {
+      // What someone typed is never kept as a sample.
+      const isButton = ["button", "submit", "reset"].includes(field.type);
+      add(el, "", field.value.length, isButton ? field.value : "", [el]);
+    }
   }
 
   const faces: Record<string, FontFaceInfo[]> = {};
@@ -176,10 +208,26 @@ const RENDERED_FONTS_BUDGET_MS = 30_000;
 const BATCH = 200;
 
 /**
+ * Text nodes Chrome generates inside a form control, whose shadow tree the page can't reach.
+ * Asking about the control instead misses text that sits deeper, as in a textarea.
+ */
+async function controlTextNodes(cdp: CDPSession, objectId: string): Promise<number[]> {
+  const { node } = await cdp.send("DOM.describeNode", { objectId, depth: -1, pierce: true });
+  const ids: number[] = [];
+  const walk = (n: Protocol.DOM.Node) => {
+    if (n.nodeType === 3) ids.push(n.backendNodeId);
+    [...(n.shadowRoots ?? []), ...(n.children ?? [])].forEach(walk);
+  };
+  (node.shadowRoots ?? []).forEach(walk);
+  if (!ids.length) return [];
+  return (await cdp.send("DOM.pushNodesByBackendIdsToFrontend", { backendNodeIds: ids })).nodeIds;
+}
+
+/**
  * Fonts Chrome drew each style's text with. Asks about text nodes, since for an element
  * Chrome also counts text in child elements, which may be in another font.
  */
-async function readRenderedFonts(cdp: CDPSession, nodeIds: string[], nodeStyles: number[], styleCount: number) {
+async function readRenderedFonts(cdp: CDPSession, nodeIds: { objectId: string; text: boolean }[], nodeStyles: number[], styleCount: number) {
   const rendered = Array.from({ length: styleCount }, () => new Map<string, RenderedFont>());
   const deadline = Date.now() + RENDERED_FONTS_BUDGET_MS;
   let missed = 0;
@@ -190,10 +238,11 @@ async function readRenderedFonts(cdp: CDPSession, nodeIds: string[], nodeStyles:
       break;
     }
     await Promise.all(
-      batch.map(async (objectId, j) => {
+      batch.map(async ({ objectId, text }, j) => {
         try {
           const { nodeId } = await cdp.send("DOM.requestNode", { objectId });
-          const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+          const targets = text ? [nodeId] : await controlTextNodes(cdp, objectId);
+          const fonts = (await Promise.all(targets.map((id) => cdp.send("CSS.getPlatformFontsForNode", { nodeId: id })))).flatMap((r) => r.fonts);
           const seen = rendered[nodeStyles[i + j]];
           for (const f of fonts) {
             const key = `${f.familyName}|${f.isCustomFont}`;
@@ -244,11 +293,11 @@ export async function getTypography(page: Page): Promise<Typography> {
     data = (await call("function () { return this.data }", true)).result.value as PageTypography;
     const nodes = (await call("function () { return this.nodes }", false)).result;
     const { result: props } = await cdp.send("Runtime.getProperties", { objectId: nodes.objectId!, ownProperties: true });
-    const nodeIds = props.filter((p) => /^\d+$/.test(p.name)).map((p) => p.value!.objectId!);
+    const nodeIds = props.filter((p) => /^\d+$/.test(p.name)).map((p) => ({ objectId: p.value!.objectId!, text: p.value!.className === "Text" }));
     await cdp.send("DOM.getDocument", { depth: 0 }); // DOM.requestNode requires it.
     const fonts = await readRenderedFonts(cdp, nodeIds, data.nodeStyles, data.styles.length);
     rendered = fonts.rendered;
-    if (fonts.missed) unmeasured.push(`The rendered font of ${fonts.missed} of ${nodeIds.length} text nodes could not be read.`);
+    if (fonts.missed) unmeasured.push(`The rendered font of ${fonts.missed} of ${nodeIds.length} text nodes and form controls could not be read.`);
 
     const { frameTree } = await cdp.send("Page.getResourceTree");
     const urls = frameTree.resources.filter((r) => r.type === "Font" && !r.failed && !r.canceled).map((r) => r.url);
@@ -298,12 +347,24 @@ export async function getTypography(page: Page): Promise<Typography> {
     return fileNames(key).has(name) || !allFileNames.has(name);
   };
 
+  // shortcut: trusts the weights @font-face declares; read OS/2 from the font file if fonts are found mislabelled.
+  const weightCovered = (key: string, style: PageStyle): boolean | null => {
+    const loaded = (data.faces[key] ?? []).filter((f) => f.status === "loaded");
+    if (!loaded.length) return null;
+    const upright = (s: string) => s === "normal";
+    const sameSlope = loaded.filter((f) => upright(f.style) === upright(style.style));
+    return (sameSlope.length ? sameSlope : loaded).some((f) => {
+      const [min, max = min] = f.weight.split(" ").map((w) => (w === "normal" ? 400 : w === "bold" ? 700 : Number(w)));
+      return Number(style.weight) >= min && Number(style.weight) <= max;
+    });
+  };
+
   return {
     unmeasured,
     styles: data.styles.map((style, i) => {
       const key = data.families.find((f) => f.stack === style.family)!.name.toLowerCase();
       const fallbackGlyphs = rendered[i].filter((f) => !isFirstFamily(key, f)).reduce((sum, f) => sum + f.glyphs, 0);
-      return { ...style, rendered: rendered[i], fallbackGlyphs: rendered[i].length ? fallbackGlyphs : null };
+      return { ...style, rendered: rendered[i], fallbackGlyphs: rendered[i].length ? fallbackGlyphs : null, weightCovered: weightCovered(key, style) };
     }),
     families: data.families.map((family) => {
       const key = family.name.toLowerCase();

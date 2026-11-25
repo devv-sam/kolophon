@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Forms fixture</title>
+    <style>
+      /* Font licenses: fonts/LICENSE.txt and fonts/Inter-LICENSE.txt (SIL Open Font License 1.1) */
+      @font-face { font-family: "Fixture Sans"; src: url(fonts/Ronzino-Regular.woff2) format("woff2"); }
+      @font-face { font-family: "Fixture Variable"; src: url(fonts/InterVariable.woff2) format("woff2"); font-weight: 100 900; }
+      @font-face { font-family: "Broken Font"; src: url(fonts/missing.woff2) format("woff2"); }
+      #value { font: 11px "Fixture Sans"; }
+      #empty { font: 12px "Fixture Sans"; }
+      #empty::placeholder { font: 700 13px "Fixture Variable"; }
+      #area { font: 14px "Fixture Sans"; }
+      #select { font: 15px "Fixture Sans"; }
+      #send { font: 16px "Fixture Sans"; }
+      #date { font: 17px "Fixture Sans"; }
+      #broken { font: 18px "Broken Font", serif; }
+      #password { font: 19px "Fixture Sans"; }
+      #blank { font: 20px "Fixture Sans"; }
+      #check { font: 21px "Fixture Sans"; }
+    </style>
+  </head>
+  <body>
+    <input id="value" value="private@example.com" />
+    <input id="empty" placeholder="Placeholder" />
+    <textarea id="area">Default text</textarea>
+    <select id="select"><option>One</option><option>Another option</option></select>
+    <input id="send" type="submit" value="Send" />
+    <input id="date" type="date" />
+    <input id="broken" value="falls back" />
+    <input id="password" type="password" value="secret" />
+    <input id="blank" />
+    <input id="check" type="checkbox" value="on" />
+  </body>
+</html>

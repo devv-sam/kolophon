@@ -1,13 +1,20 @@
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { launch, type LaunchedChrome } from "chrome-launcher";
-import puppeteer, { type Browser, type CDPSession, type Page } from "puppeteer-core";
+import puppeteer, { type Browser, type CDPSession, type Page, type Viewport } from "puppeteer-core";
 
 let chrome: LaunchedChrome | undefined;
 let browser: Promise<Browser> | undefined;
 
 /** Fixed, so responsive values are comparable between runs. */
-export const VIEWPORT = { width: 1280, height: 800, deviceScaleFactor: 1 };
+export const VIEWPORTS = {
+  desktop: { width: 1280, height: 800, deviceScaleFactor: 1 },
+  mobile: { width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true },
+} satisfies Record<string, Viewport>;
+
+// A machine with no mouse, such as a CI runner, otherwise reports `hover: none` on desktop.
+// Touch emulation still overrides this on mobile.
+const MOUSE = "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4";
 
 // One headless Chrome per process, started on first use.
 function getBrowser(): Promise<Browser> {
@@ -19,7 +26,7 @@ function getBrowser(): Promise<Browser> {
       if (chromePath) await access(chromePath, constants.X_OK);
       chrome = await launch({
         chromePath,
-        chromeFlags: ["--headless=new", "--disable-gpu"],
+        chromeFlags: ["--headless=new", "--disable-gpu", MOUSE],
       });
     } catch (err) {
       browser = undefined;
@@ -46,17 +53,22 @@ function assertSamePage(page: Page, url: string): void {
 }
 
 /**
- * Opens `url` at the fixed viewport, waits for network and fonts to settle, runs `fn`, closes the tab.
+ * Opens `url` at a fixed viewport, waits for network and fonts to settle, runs `fn`, closes the tab.
  * Throws on an error status or a redirect to another page, so neither is measured as the app.
  */
-export async function withPage<T>(url: string, fn: (page: Page) => Promise<T>): Promise<T> {
+export async function withPage<T>(url: string, fn: (page: Page) => Promise<T>, viewport: Viewport = VIEWPORTS.desktop): Promise<T> {
   const { protocol } = new URL(url);
   if (protocol !== "http:" && protocol !== "https:") {
     throw new Error(`Only http and https URLs are supported, got ${protocol}`);
   }
   const page = await (await getBrowser()).newPage();
   try {
-    await page.setViewport(VIEWPORT);
+    await page.setViewport(viewport);
+    // Otherwise taken from the machine's own settings.
+    await page.emulateMediaFeatures([
+      { name: "prefers-color-scheme", value: "light" },
+      { name: "prefers-reduced-motion", value: "no-preference" },
+    ]);
     const response = await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
     // 304 is a cached copy of the page, not an error.
     if (response && !response.ok() && response.status() !== 304) throw new Error(`${url} answered ${response.status()}`);

@@ -2,13 +2,13 @@ import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { closeBrowser, VIEWPORT, withPage } from "../dist/browser.js";
+import { closeBrowser, VIEWPORTS, withPage } from "../dist/browser.js";
 import { getTypography } from "../dist/typography.js";
 
 const fixtures = new URL("./fixtures/", import.meta.url);
 let http, base;
 
-const measure = (path) => withPage(base + path, getTypography);
+const measure = (path, viewport) => withPage(base + path, getTypography, viewport);
 const bySelector = (t, selector) => t.styles.find((s) => s.selector === selector);
 
 before(async () => {
@@ -103,8 +103,53 @@ test("counts fallback glyphs in any element of a style, not just the first", asy
 
 test("measures at the fixed viewport and locates each style", async () => {
   const { styles } = await measure("responsive.html");
-  assert.equal(parseFloat(styles[0].size), VIEWPORT.width * 0.02);
+  assert.equal(parseFloat(styles[0].size), VIEWPORTS.desktop.width * 0.02);
   assert.equal(styles[0].selector, "body > main > p:nth-of-type(1)");
+});
+
+test("measures at the mobile viewport when asked", async () => {
+  const [desktop] = (await measure("responsive.html")).styles;
+  const [mobile] = (await measure("responsive.html", VIEWPORTS.mobile)).styles;
+  assert.equal(parseFloat(mobile.size), VIEWPORTS.mobile.width * 0.02);
+  assert.deepEqual([desktop.letterSpacing, mobile.letterSpacing], ["normal", "3px"]);
+  assert.deepEqual([desktop.weight, mobile.weight], ["400", "700"], "mobile has no hover");
+});
+
+test("doesn't depend on the machine's mouse or display settings", async () => {
+  const media = (viewport) =>
+    withPage(
+      `${base}basic.html`,
+      (page) => page.evaluate(() => ["(hover: hover)", "(pointer: fine)", "(prefers-color-scheme: light)", "(prefers-reduced-motion: no-preference)"].map((q) => matchMedia(q).matches)),
+      viewport,
+    );
+  assert.deepEqual(await media(VIEWPORTS.desktop), [true, true, true, true]);
+  assert.deepEqual(await media(VIEWPORTS.mobile), [false, false, true, true]);
+});
+
+test("measures the text in form fields", async () => {
+  const t = await measure("forms.html");
+  assert.deepEqual(t.unmeasured, []);
+  const got = Object.fromEntries(t.styles.map((s) => [s.selector, s]));
+  assert.deepEqual(Object.keys(got).sort(), ["#area", "#broken", "#date", "#empty::placeholder", "#select", "#send", "#value"]);
+  assert.deepEqual([got["#empty::placeholder"].size, got["#empty::placeholder"].weight], ["13px", "700"]);
+  for (const id of ["#area", "#date", "#empty::placeholder", "#select", "#send", "#value"]) {
+    assert.ok(got[id].rendered.length, `${id} has rendered fonts`);
+    assert.equal(got[id].fallbackGlyphs, 0, `${id} ${JSON.stringify(got[id].rendered)}`);
+  }
+  assert.ok(got["#broken"].fallbackGlyphs > 0);
+});
+
+test("keeps no typed value, and reads no password", async () => {
+  assert.doesNotMatch(JSON.stringify(await measure("forms.html")), /private@example|secret|Default text/);
+});
+
+test("finds weights no loaded face covers", async () => {
+  const t = await measure("weights.html");
+  const covered = Object.fromEntries(t.styles.map((s) => [s.selector, s.weightCovered]));
+  assert.deepEqual(covered, {
+    "#regular": true, "#faked": false, "#range": true, "#lost": false,
+    "#bold": true, "#italic": true, "#system": null, "#broken": null,
+  });
 });
 
 test("measuring twice gives the same result", async () => {
