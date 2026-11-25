@@ -1,0 +1,99 @@
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
+import { launch, type LaunchedChrome } from "chrome-launcher";
+import puppeteer, { type Browser, type CDPSession, type Page } from "puppeteer-core";
+
+let chrome: LaunchedChrome | undefined;
+let browser: Promise<Browser> | undefined;
+
+/** Fixed, so responsive values are comparable between runs. */
+export const VIEWPORT = { width: 1280, height: 800, deviceScaleFactor: 1 };
+
+// One headless Chrome per process, started on first use.
+function getBrowser(): Promise<Browser> {
+  browser ??= (async () => {
+    try {
+      // chrome-launcher ignores a missing CHROME_PATH when searching, and crashes the
+      // process with an unhandled spawn error when given one, so check it here.
+      const chromePath = process.env.CHROME_PATH;
+      if (chromePath) await access(chromePath, constants.X_OK);
+      chrome = await launch({
+        chromePath,
+        chromeFlags: ["--headless=new", "--disable-gpu"],
+      });
+    } catch (err) {
+      browser = undefined;
+      throw new Error(
+        "kolophon could not find Chrome. Install Google Chrome, or set CHROME_PATH to a Chrome/Chromium binary.",
+        { cause: err },
+      );
+    }
+    return puppeteer.connect({ browserURL: `http://127.0.0.1:${chrome.port}` });
+  })();
+  return browser;
+}
+
+// Ignores the query, hash and a trailing slash, which apps rewrite without changing page.
+const pageKey = (url: string) => {
+  const { origin, pathname } = new URL(url);
+  return origin + pathname.replace(/\/$/, "");
+};
+
+function assertSamePage(page: Page, url: string): void {
+  if (pageKey(page.url()) !== pageKey(url)) {
+    throw new Error(`${url} redirected to ${page.url()}. Pass the URL of the page to measure; pages behind a login aren't supported.`);
+  }
+}
+
+/**
+ * Opens `url` at the fixed viewport, waits for network and fonts to settle, runs `fn`, closes the tab.
+ * Throws on an error status or a redirect to another page, so neither is measured as the app.
+ */
+export async function withPage<T>(url: string, fn: (page: Page) => Promise<T>): Promise<T> {
+  const { protocol } = new URL(url);
+  if (protocol !== "http:" && protocol !== "https:") {
+    throw new Error(`Only http and https URLs are supported, got ${protocol}`);
+  }
+  const page = await (await getBrowser()).newPage();
+  try {
+    await page.setViewport(VIEWPORT);
+    const response = await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
+    // 304 is a cached copy of the page, not an error.
+    if (response && !response.ok() && response.status() !== 304) throw new Error(`${url} answered ${response.status()}`);
+    assertSamePage(page, url);
+    await page.evaluate(() => document.fonts.ready);
+    const result = await fn(page);
+    assertSamePage(page, url); // It may have navigated while being measured.
+    return result;
+  } finally {
+    await page.close();
+  }
+}
+
+// Sync on purpose, so it can run from an exit handler.
+export function closeBrowser(): void {
+  chrome?.kill();
+  chrome = browser = undefined;
+}
+
+/**
+ * Enables the CSS domain and returns every stylesheet's text with its URL. Reading over CDP
+ * works for cross-origin sheets (CDNs, Google Fonts) that the page itself isn't allowed to read.
+ */
+export async function readStyleSheets(cdp: CDPSession, page: Page): Promise<{ url: string; text: string }[]> {
+  await cdp.send("DOM.enable"); // CSS.enable requires it.
+  // CSS.enable announces every existing stylesheet before it resolves.
+  const sheets: { id: string; url: string }[] = [];
+  cdp.on("CSS.styleSheetAdded", ({ header }) => sheets.push({ id: header.styleSheetId, url: header.sourceURL || page.url() }));
+  await cdp.send("CSS.enable");
+  const texts = [];
+  for (const sheet of sheets) {
+    try {
+      const { text } = await cdp.send("CSS.getStyleSheetText", { styleSheetId: sheet.id });
+      texts.push({ url: sheet.url, text });
+    } catch {
+      // A sheet removed since it was announced has no text; skip it.
+    }
+  }
+  return texts;
+}

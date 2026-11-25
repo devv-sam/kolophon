@@ -15,5 +15,18 @@
     "url": "https://github.com/devv-sam/kolophon.git"
   },
   "homepage": "https://github.com/devv-sam/kolophon#readme",
-  "bugs": "https://github.com/devv-sam/kolophon/issues"
+  "bugs": "https://github.com/devv-sam/kolophon/issues",
+  "scripts": {
+    "build": "tsc",
+    "compile": "tsc --noEmit",
+    "test": "tsc && node --test"
+  },
+  "dependencies": {
+    "chrome-launcher": "^1.2.2",
+    "puppeteer-core": "^24.43.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^5.9.3"
+  }
 }
