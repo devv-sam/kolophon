@@ -32,3 +32,6 @@ web-ext.config.ts
 
 # mcp build output
 dist
+
+# private product context for agents; never commit or publish
+PROJECT.md
