@@ -1,6 +1,7 @@
 import type { CDPSession, Page, Protocol } from "puppeteer-core";
 import { readStyleSheets } from "./browser.js";
 import { readFontFile, type FontAxis } from "./fontfile.js";
+import { selectorOf } from "./selector.js";
 
 /** A font Chrome actually drew glyphs with. Names of installed fonts differ between machines. */
 export interface RenderedFont {
@@ -79,8 +80,8 @@ type PageTypography = {
 };
 
 /**
- * Runs inside the page, where only this function's source is sent,
- * so everything it uses must be defined in its body.
+ * Runs inside the page, where only this function's source and `selectorOf` are sent,
+ * so everything else it uses must be defined in its body.
  */
 // shortcut: skips shadow roots, iframes, ::before/::after text and typed passwords; add them when apps rely on them.
 function extractTypography(): { data: PageTypography; nodes: (Text | Element)[] } {
@@ -95,24 +96,6 @@ function extractTypography(): { data: PageTypography; nodes: (Text | Element)[] 
     if (nodes) nodes.push(node);
     else textByElement.set(el, [node]);
   }
-
-  const selectorOf = (el: Element): string => {
-    const parts: string[] = [];
-    for (let e: Element | null = el; e; e = e.parentElement) {
-      if (e.id && document.querySelectorAll(`#${CSS.escape(e.id)}`).length === 1) {
-        parts.unshift(`#${CSS.escape(e.id)}`);
-        break;
-      }
-      const tag = CSS.escape(e.localName);
-      if (e === document.body) {
-        parts.unshift(tag);
-        break;
-      }
-      const same = [...(e.parentElement?.children ?? [])].filter((c) => c.localName === e.localName);
-      parts.unshift(same.length > 1 ? `${tag}:nth-of-type(${same.indexOf(e) + 1})` : tag);
-    }
-    return parts.join(" > ");
-  };
 
   const styles = new Map<string, PageStyle & { nodes: (Text | Element)[] }>();
   const families = new Map<string, PageFamily>();
@@ -296,7 +279,7 @@ export async function getTypography(page: Page): Promise<Typography> {
       }
     }
 
-    const { result } = await cdp.send("Runtime.evaluate", { expression: `(${extractTypography})()` });
+    const { result } = await cdp.send("Runtime.evaluate", { expression: `${selectorOf}; (${extractTypography})()` });
     if (!result.objectId) throw new Error(`could not read the page's text: ${result.description ?? "no result"}`);
     const call = (fn: string, returnByValue: boolean) =>
       cdp.send("Runtime.callFunctionOn", { objectId: result.objectId, functionDeclaration: fn, returnByValue });

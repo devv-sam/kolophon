@@ -73,8 +73,8 @@ export async function check({ dir, baseUrl }: { dir: string; baseUrl?: string })
   for (const [path, views] of Object.entries(baseline.pages)) {
     for (const viewport of Object.keys(VIEWPORTS)) {
       try {
-        const t = await measurePage(target.baseUrl + path, viewport);
-        results.push({ path, viewport, ...compare(views[viewport], t) });
+        const { t, m } = await measurePage(target.baseUrl + path, viewport);
+        results.push({ path, viewport, ...compare(views[viewport], t, m) });
       } catch (err) {
         // The other pages may still show drift.
         results.push({ path, viewport, drift: [], notes: [], unmeasured: [(err as Error).message] });

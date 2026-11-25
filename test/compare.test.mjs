@@ -1,8 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseBaseline, serialize, toView } from "../dist/baseline.js";
+import { parseBaseline, serialize, toView as toFullView } from "../dist/baseline.js";
 import { report } from "../dist/check.js";
-import { compare } from "../dist/compare.js";
+import { compare as compareAll } from "../dist/compare.js";
+
+const still = { transitions: [], animations: [] };
+const noMotion = { ...still, reduced: still };
+const compare = (b, t) => compareAll(b, t, noMotion);
+const toView = (t) => toFullView(t, noMotion);
 
 const style = (over = {}) => ({
   family: "Inter, sans-serif", weight: "400", size: "16px", lineHeight: "24px", letterSpacing: "normal", style: "normal",
@@ -138,16 +143,17 @@ test("the report merges viewports and limits lists", () => {
 
 test("reads back what it writes, and refuses anything else", () => {
   const viewports = { desktop: { width: 1 } };
-  const good = { version: 1, baseUrl: "http://localhost:3000", viewports, pages: { "/": { desktop: base } } };
+  const good = { version: 2, baseUrl: "http://localhost:3000", viewports, pages: { "/": { desktop: base } } };
   assert.deepEqual(parseBaseline(serialize(good), viewports), good);
 
   const bad = (over) => () => parseBaseline(JSON.stringify({ ...good, ...over }), viewports);
   assert.throws(() => parseBaseline("{", viewports), /isn't valid JSON/);
   assert.throws(() => parseBaseline("null", viewports), /isn't a kolophon baseline/);
-  assert.throws(bad({ version: 2 }), /format version 2/);
+  assert.throws(bad({ version: 1 }), /format version 1.*snapshot <url\.\.\.> --update/);
   assert.throws(bad({ viewports: { desktop: { width: 2 } } }), /different viewports/);
   assert.throws(bad({ pages: {} }), /no pages/);
   assert.throws(bad({ pages: { "/": {} } }), /incomplete for \/ \(desktop\)/);
-  assert.throws(bad({ pages: { "/": { desktop: { fonts: [], styles: [{}] } } } }), /incomplete/);
+  assert.throws(bad({ pages: { "/": { desktop: { ...base, styles: [{}] } } } }), /incomplete/);
+  assert.throws(bad({ pages: { "/": { desktop: { ...base, reducedMotion: undefined } } } }), /incomplete/);
   assert.throws(bad({ pages: { "@evil.example/": { desktop: base } } }), /isn't a path/);
 });

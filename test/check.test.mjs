@@ -98,6 +98,24 @@ test("a mobile-only change names only the mobile viewport", async () => {
   assert.match(res.stdout, /at {3}\/responsive\.html \(mobile\): /);
 });
 
+test("changed motion fails, and so does losing reduced-motion support", async () => {
+  await snapshot("motion.html");
+  assert.equal((await run(["check"])).code, 0);
+
+  change = (html) => html.replace("opacity 150ms ease-in", "opacity 450ms ease-in");
+  const slower = await run(["check"]);
+  assert.equal(slower.code, 1, slower.stdout + slower.stderr);
+  assert.match(slower.stdout, /transition opacity 450ms ease-in\n {2}at {3}\/motion\.html \(desktop, mobile\): #buttons > button:nth-of-type\(1\)/);
+
+  change = (html) => html.replace("--rise: 30px", "--rise: 90px");
+  assert.match((await run(["check"])).stdout, /translateY\(90px\)/);
+
+  change = (html) => html.replace("(prefers-reduced-motion: reduce)", "print");
+  const reduced = await run(["check"]);
+  assert.equal(reduced.code, 1, reduced.stdout + reduced.stderr);
+  assert.match(reduced.stdout, /Now moves even when the user asks for reduced motion[\s\S]*^1 finding\./m);
+});
+
 test("removed text is a note, not drift", async () => {
   await snapshot("typography.html");
   change = (html) => html.replace("<button>Action</button>", "");

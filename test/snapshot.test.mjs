@@ -52,7 +52,7 @@ test("writes a baseline for every page and viewport, the same way twice", async 
   const text = await read();
 
   const baseline = JSON.parse(text);
-  assert.equal(baseline.version, 1);
+  assert.equal(baseline.version, 2);
   assert.equal(baseline.baseUrl + "/", base);
   assert.deepEqual(Object.keys(baseline.viewports), ["desktop", "mobile"]);
   assert.deepEqual(Object.keys(baseline.pages), ["/responsive.html", "/typography.html"]);
@@ -105,6 +105,14 @@ test("points out font problems the baseline would accept", async () => {
   assert.match(res.stdout, /\(mobile\): no loaded font face covers the weight: .*at #faked/);
   assert.match(res.stdout, /glyphs fell back .*at #broken/);
   assert.match(res.stdout, /font face failed to load: Broken Font/);
+});
+
+test("points out motion problems the baseline would accept", async () => {
+  const res = await run(["snapshot", `${base}motion.html`]);
+  assert.equal(res.code, 0, res.stderr);
+  assert.match(res.stdout, /\(desktop\): .*4 transitions, 2 animations/);
+  assert.match(res.stdout, /animation missing has no @keyframes, so nothing moves: at #lost/);
+  assert.match(res.stdout, /1 of 6 transitions and animations still run when the user asks for reduced motion/);
 });
 
 test("exits 2 when it can't run", async () => {

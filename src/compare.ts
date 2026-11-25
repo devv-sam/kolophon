@@ -1,4 +1,18 @@
-import { styleKey, toStyle, toView, type BaselineStyle, type BaselineView } from "./baseline.js";
+import {
+  animationKey,
+  styleKey,
+  toAnimation,
+  toFonts,
+  toStyle,
+  toTransition,
+  transitionKey,
+  type BaselineAnimation,
+  type BaselineMotion,
+  type BaselineStyle,
+  type BaselineTransition,
+  type BaselineView,
+} from "./baseline.js";
+import type { Motion, MotionSet } from "./motion.js";
 import type { TextStyle, Typography } from "./typography.js";
 
 export interface Finding {
@@ -58,8 +72,93 @@ const names = (styles: TextStyle[]) => [...new Set(styles.flatMap((s) => s.rende
 
 export const hiddenText = (n: number) => `${n} piece${n === 1 ? "" : "s"} of text`;
 
+const describeTransition = (t: BaselineTransition) => `${t.property} ${t.duration} ${t.easing}`;
+const describeAnimation = (a: BaselineAnimation) =>
+  [a.duration, a.easing, ...(a.iterations === "1" ? [] : [`${a.iterations} times`]), ...(a.direction === "normal" ? [] : [a.direction]), `{ ${a.keyframes.join(" ")} }`].join(" ");
+
+interface Move {
+  key: string;
+  /** Moves with the same root are one wrong declaration. */
+  root: string;
+  found: string;
+  selector: string;
+  hints: string[];
+  /** Has no keyframes, so nothing moves. */
+  still: boolean;
+}
+
+/** What moves now and isn't in the baseline. */
+function newMoves(baseline: BaselineMotion, now: MotionSet): Move[] {
+  const transitions = new Set(baseline.transitions.map(transitionKey));
+  const animations = new Set(baseline.animations.map(animationKey));
+  return [
+    ...now.transitions.flatMap((t) => {
+      const b = toTransition(t);
+      if (transitions.has(transitionKey(b))) return [];
+      const near = baseline.transitions.filter((x) => x.property === b.property);
+      return [
+        {
+          key: transitionKey(b),
+          root: `transition ${b.duration} ${b.easing}`,
+          found: `transition ${describeTransition(b)}`,
+          selector: t.selector,
+          hints: near.length ? [`baseline for ${b.property}: ${near.map((x) => `${x.duration} ${x.easing}`).join(" | ")}`] : [],
+          still: false,
+        },
+      ];
+    }),
+    ...now.animations.flatMap((a) => {
+      const b = toAnimation(a);
+      if (animations.has(animationKey(b))) return [];
+      const near = baseline.animations.filter((x) => x.keyframes.join() === b.keyframes.join());
+      return [
+        {
+          key: animationKey(b),
+          root: `animation ${animationKey(b)}`,
+          found: `animation ${a.name} ${describeAnimation(b)}`,
+          selector: a.selector,
+          still: !b.keyframes.length,
+          hints: near.map((x) => `baseline for the same keyframes: ${describeAnimation(x)}`),
+        },
+      ];
+    }),
+  ];
+}
+
+/** Motion the page has that its baseline doesn't. */
+function compareMotion(baseline: BaselineView, m: Motion): Pick<Comparison, "drift" | "notes"> {
+  const moves = newMoves(baseline.motion, m);
+  const drift: Finding[] = moves.map(({ root, found, selector, hints, still }) => ({
+    cause: root,
+    found: still ? `An animation has no @keyframes, so nothing moves: ${found}` : `Not in the baseline: ${found}`,
+    where: [selector],
+    hints: still ? [] : hints,
+    fix: still ? "Check the animation name, or add its @keyframes." : "Use motion the baseline has. Hints are guesses, so check them against the design.",
+  }));
+
+  // Motion that is new altogether is already a finding.
+  const added = new Set(moves.map((move) => move.key));
+  for (const { key, found, selector, still } of newMoves(baseline.reducedMotion, m.reduced)) {
+    if (still || added.has(key)) continue;
+    drift.push({
+      cause: "reduced motion",
+      found: `Now moves even when the user asks for reduced motion: ${found}`,
+      where: [selector],
+      hints: [],
+      fix: "Turn it off in @media (prefers-reduced-motion: reduce).",
+    });
+  }
+
+  const has = new Set([...m.transitions.map((t) => transitionKey(toTransition(t))), ...m.animations.map((a) => animationKey(toAnimation(a)))]);
+  const notes = [
+    ...baseline.motion.transitions.filter((t) => !has.has(transitionKey(t))).map((t) => `Baseline transition not seen: ${describeTransition(t)}`),
+    ...baseline.motion.animations.filter((a) => !has.has(animationKey(a))).map((a) => `Baseline animation not seen: ${describeAnimation(a)}`),
+  ];
+  return { drift, notes };
+}
+
 /** Compares what one page shows at one viewport with its baseline. A problem the baseline records is accepted until it gets worse. */
-export function compare(baseline: BaselineView, t: Typography): Comparison {
+export function compare(baseline: BaselineView, t: Typography, m: Motion | null): Comparison {
   const drift: Finding[] = [];
   const unmeasured = [...t.unmeasured];
   const known = new Map(baseline.styles.map((s) => [styleKey(s), s]));
@@ -130,7 +229,7 @@ export function compare(baseline: BaselineView, t: Typography): Comparison {
   }
 
   const broken = new Set([...fellBack.keys()].map(firstFamily));
-  for (const font of toView(t).fonts) {
+  for (const font of toFonts(t)) {
     const before = baseline.fonts.find((f) => f.family === font.family);
     // A new font shows up as new styles, and one that fell back is already reported.
     if (!before || broken.has(font.family)) continue;
@@ -159,5 +258,10 @@ export function compare(baseline: BaselineView, t: Typography): Comparison {
 
   const notes = missing.map((s) => `Baseline style not seen: ${describe(s)}`);
   if (t.hidden) notes.push(`Hidden at load, so not measured: ${hiddenText(t.hidden)}`);
+  if (m) {
+    const motion = compareMotion(baseline, m);
+    drift.push(...motion.drift);
+    notes.push(...motion.notes);
+  }
   return { drift, notes, unmeasured };
 }
