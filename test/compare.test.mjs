@@ -13,7 +13,7 @@ const axes = [{ tag: "wght", name: "Weight", min: 100, default: 400, max: 900 }]
 const family = (over = {}) => ({
   name: "Inter", stack: "Inter, sans-serif", chars: 1, webFont: true, faces: [{ weight: "400", style: "normal", status: "loaded" }], variable: true, axes, ...over,
 });
-const page = (styles = [style()], families = [family()], unmeasured = []) => ({ styles, families, unmeasured });
+const page = (styles = [style()], families = [family()], unmeasured = []) => ({ styles, families, unmeasured, hidden: 0 });
 const heading = style({ size: "28px", lineHeight: "36px", weight: "600", selector: "h2" });
 const base = toView(page([style(), heading]));
 
@@ -26,13 +26,13 @@ test("a new style names the value, the selector and the nearest baseline value",
   assert.equal(drift.length, 1);
   assert.match(drift[0].found, /Inter, sans-serif, 15px\/24px, weight 400/);
   assert.deepEqual(drift[0].where, ["#small"]);
-  assert.match(drift[0].fix, /font-size: 15px should be 16px\.$/);
+  assert.match(drift[0].hints[0], /font-size: 15px should be 16px$/);
 });
 
 test("offers a style the page lost when the nearest one is still in use", () => {
   const label = style({ size: "13px", lineHeight: "16px", weight: "600", letterSpacing: "0.52px", selector: "label" });
   const lost = compare(toView(page([style(), label])), page([style(), style({ family: "Arial", size: "13.3333px", lineHeight: "normal", selector: "input" })]));
-  assert.match(lost.drift[0].fix, /Nearest baseline style: Inter, sans-serif, 16px.* Or it may have been one no longer seen here: Inter, sans-serif, 13px\/16px/);
+  assert.match(lost.drift[0].hints.join("\n"), /nearest is Inter, sans-serif, 16px.*\nor it was one no longer seen: Inter, sans-serif, 13px\/16px/);
 });
 
 test("a style no longer seen is a note", () => {
@@ -71,7 +71,8 @@ test("a font that fell back is one finding for all its styles, saying why", () =
   const { drift } = compare(base, page(now, faces("error")));
   assert.equal(drift.length, 1, JSON.stringify(drift));
   assert.deepEqual(drift[0].where, ["#body", "h2"]);
-  assert.match(drift[0].found, /Inter didn't draw its text\. Fonts drawn: Menlo/);
+  assert.equal(drift[0].found, "Inter didn't draw its text");
+  assert.deepEqual(drift[0].hints, ["drawn with Menlo"]);
   assert.match(drift[0].fix, /failed to load/);
   assert.match(compare(base, page(now, [family({ faces: [], webFont: false, axes: [] })])).drift[0].fix, /no @font-face/);
 });
@@ -90,7 +91,7 @@ test("an unreadable font file matters only if the baseline could read it", () =>
 
 test("exit codes: drift beats incomplete, and incomplete is never a pass", () => {
   const result = (over) => ({ path: "/", viewport: "desktop", drift: [], notes: [], unmeasured: [], ...over });
-  const drift = [{ found: "x", where: ["#a"], fix: "y" }];
+  const drift = [{ cause: "c", found: "x", where: ["#a"], fix: "y", hints: [] }];
   assert.equal(report([result()]).code, 0);
   assert.equal(report([result({ notes: ["n"] })]).code, 0);
   assert.equal(report([result(), result({ unmeasured: ["u"] })]).code, 2);
@@ -98,12 +99,39 @@ test("exit codes: drift beats incomplete, and incomplete is never a pass", () =>
   assert.equal(report([result({ drift }), result({ unmeasured: ["u"] })]).code, 1);
 });
 
-test("the report groups viewports and limits selectors", () => {
-  const drift = [{ found: "Odd size", where: ["#1", "#2", "#3", "#4", "#5", "#6", "#7"], fix: "Use 16px" }];
+test("says when an installed copy hides a failed web font", () => {
+  const local = { fallbackGlyphs: 10, rendered: [{ name: "Inter Medium", custom: false, glyphs: 10 }], weightCovered: null };
+  const { drift } = compare(base, page([style(local)], [family({ faces: [{ weight: "400", style: "normal", status: "error" }], axes: [] })]));
+  assert.match(drift[0].found, /The web font Inter didn't draw its text; a copy installed on this machine did/);
+});
+
+test("one wrong declaration is one finding, whatever styles it touches", () => {
+  const spaced = (s) => ({ ...s, letterSpacing: "0.3px" });
+  const result = (path, styles) => ({ path, viewport: "desktop", ...compare(base, page(styles)) });
+  const { text } = report([result("/", [spaced(style()), spaced(heading)]), result("/b", [spaced(style())])]);
+  assert.match(text, /^1 finding\./m, text);
+  assert.match(text, /DRIFT {2}Text style not in the baseline: .*16px[^\n]*\n {2}also Text style not in the baseline: .*28px/);
+  assert.match(text, /at {3}\/ \(desktop\): #body\n {2}at {3}\/ \(desktop\): h2\n {2}at {3}\/b \(desktop\): #body/);
+
+  const resized = [style({ size: "15.5px", lineHeight: "23.25px" }), style({ size: "15.5px", lineHeight: "22.48px" })];
+  assert.match(report([result("/", resized)]).text, /^1 finding\./m, "the line height only follows the size");
+  const unrelated = [style({ size: "15px" }), style({ weight: "300" })];
+  assert.match(report([result("/", unrelated)]).text, /^2 findings\./m, "different causes stay apart");
+});
+
+test("text hidden at load is a note", () => {
+  const { drift, notes } = compare(base, { ...page([style(), heading]), hidden: 3 });
+  assert.deepEqual([drift, notes], [[], ["Hidden at load, so not measured: 3 pieces of text"]]);
+});
+
+test("the report merges viewports and limits lists", () => {
+  const drift = [{ cause: "c", found: "Odd size", where: ["#1", "#2", "#3", "#4", "#5", "#6", "#7"], fix: "Use 16px", hints: ["guess"] }];
   const { text } = report(["desktop", "mobile"].map((viewport) => ({ path: "/", viewport, drift, notes: [], unmeasured: [] })));
   assert.equal(
     text,
-    "DRIFT  Odd size\n  page / (desktop, mobile)\n  at   #1\n  at   #2\n  at   #3\n  at   #4\n  at   #5\n  and 2 more\n  fix  Use 16px\n\n" +
+    "DRIFT  Odd size\n" +
+      [1, 2, 3, 4, 5].map((n) => `  at   / (desktop, mobile): #${n}\n`).join("") +
+      "  at   and 2 more\n  hint guess\n  fix  Use 16px\n\n" +
       "1 finding. Fix the app. If a change is intended, ask the developer to update the baseline.",
   );
 });

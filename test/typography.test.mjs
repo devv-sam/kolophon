@@ -34,9 +34,10 @@ after(() => {
 });
 
 test("groups the rendered text styles", async () => {
-  const { styles, families, unmeasured } = await measure("typography.html");
+  const { styles, families, unmeasured, hidden } = await measure("typography.html");
   assert.deepEqual(unmeasured, []);
   assert.equal(styles.length, 3, "hidden span must not add a style");
+  assert.equal(hidden, 1, "but it is counted");
 
   const [body, ...rest] = styles;
   assert.deepEqual([body.size, body.weight, body.lineHeight, body.elements], ["16px", "400", "24px", 2]);
@@ -129,6 +130,7 @@ test("doesn't depend on the machine's mouse or display settings", async () => {
 test("measures the text in form fields", async () => {
   const t = await measure("forms.html");
   assert.deepEqual(t.unmeasured, []);
+  assert.equal(t.hidden, 0, "closed select options aren't hidden text");
   const got = Object.fromEntries(t.styles.map((s) => [s.selector, s]));
   assert.deepEqual(Object.keys(got).sort(), ["#area", "#broken", "#date", "#empty::placeholder", "#select", "#send", "#value"]);
   assert.deepEqual([got["#empty::placeholder"].size, got["#empty::placeholder"].weight], ["13px", "700"]);

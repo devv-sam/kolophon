@@ -61,6 +61,8 @@ export interface FontFamily {
 export interface Typography {
   families: FontFamily[];
   styles: TextStyle[];
+  /** Text nodes that weren't visible at load (closed menus, scroll reveals), so weren't measured. */
+  hidden: number;
   /** What could not be measured, one sentence each; empty when everything was. */
   unmeasured: string[];
 }
@@ -73,6 +75,7 @@ type PageTypography = {
   faces: Record<string, FontFaceInfo[]>;
   /** For each collected text node or form control, the index of its style. */
   nodeStyles: number[];
+  hidden: number;
 };
 
 /**
@@ -149,10 +152,16 @@ function extractTypography(): { data: PageTypography; nodes: (Text | Element)[] 
     family.chars += chars;
   };
 
+  let hidden = 0;
   const visible = (el: Element) => el.checkVisibility({ opacityProperty: true, visibilityProperty: true });
   for (const [el, nodes] of textByElement) {
     // A textarea's child text is only its default value; the control itself is read below.
-    if (!visible(el) || el.closest("script, style, noscript, template, textarea")) continue;
+    if (el.closest("script, style, noscript, template, textarea")) continue;
+    if (!visible(el)) {
+      // A closed select's options show up one at a time, in the select itself.
+      if (!el.closest("option")) hidden += nodes.length;
+      continue;
+    }
     const text = nodes.map((n) => n.data.trim()).join(" ");
     add(el, "", text.length, text, nodes);
   }
@@ -192,6 +201,7 @@ function extractTypography(): { data: PageTypography; nodes: (Text | Element)[] 
       styles: sorted.map(({ nodes: _, ...style }) => style),
       faces,
       nodeStyles: sorted.flatMap((style, i) => style.nodes.map(() => i)),
+      hidden,
     },
     nodes: sorted.flatMap((style) => style.nodes),
   };
@@ -357,6 +367,7 @@ export async function getTypography(page: Page): Promise<Typography> {
 
   return {
     unmeasured,
+    hidden: data.hidden,
     styles: data.styles.map((style, i) => {
       const key = data.families.find((f) => f.stack === style.family)!.name.toLowerCase();
       const fallbackGlyphs = rendered[i].filter((f) => !isFirstFamily(key, f)).reduce((sum, f) => sum + f.glyphs, 0);
