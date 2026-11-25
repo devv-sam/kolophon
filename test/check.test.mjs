@@ -58,6 +58,7 @@ test("an unchanged app passes and nothing is written", async () => {
   const res = await run(["check"]);
   assert.equal(res.code, 0, res.stdout + res.stderr);
   assert.match(res.stdout, /^No drift\.$/m);
+  assert.match(res.stdout, /\/typography\.html \(desktop, mobile\): Hidden at load, so not measured: 1 piece of text/);
   assert.equal(await readFile(file(), "utf8"), before);
   assert.deepEqual(await readdir(dir), ["kolophon.json"]);
 });
@@ -68,8 +69,7 @@ test("one changed font size fails, naming the value and the selector", async () 
   const res = await run(["check"]);
   assert.equal(res.code, 1, res.stdout + res.stderr);
   assert.match(res.stdout, /DRIFT .*31px\/40px/);
-  assert.match(res.stdout, /page \/typography\.html \(desktop, mobile\)/);
-  assert.match(res.stdout, /at {3}body > h1/);
+  assert.match(res.stdout, /at {3}\/typography\.html \(desktop, mobile\): body > h1/);
   assert.match(res.stdout, /font-size: 31px should be 32px/);
   assert.match(res.stdout, /^1 finding\. Fix the app/m);
 });
@@ -79,7 +79,7 @@ test("a font that stops loading fails", async () => {
   change = (html) => html.replace("fonts/InterVariable.woff2", "fonts/gone.woff2");
   const res = await run(["check"]);
   assert.equal(res.code, 1, res.stdout + res.stderr);
-  assert.match(res.stdout, /Range didn't draw its text[\s\S]*at {3}#range\n {2}fix {2}A font file of Range failed to load/);
+  assert.match(res.stdout, /Range didn't draw its text\n {2}at {3}[^\n]*#range\n {2}hint drawn with [^\n]*\n {2}fix {2}A font file of Range failed to load/);
 });
 
 test("a weight the font no longer covers fails", async () => {
@@ -95,7 +95,7 @@ test("a mobile-only change names only the mobile viewport", async () => {
   change = (html) => html.replace("letter-spacing: 3px", "letter-spacing: 4px");
   const res = await run(["check"]);
   assert.equal(res.code, 1, res.stdout + res.stderr);
-  assert.match(res.stdout, /page \/responsive\.html \(mobile\)/);
+  assert.match(res.stdout, /at {3}\/responsive\.html \(mobile\): /);
 });
 
 test("removed text is a note, not drift", async () => {

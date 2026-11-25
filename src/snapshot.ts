@@ -3,6 +3,7 @@ import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BASELINE_FILE, BASELINE_VERSION, serialize, toView, type Baseline } from "./baseline.js";
 import { VIEWPORTS, withPage } from "./browser.js";
+import { hiddenText } from "./compare.js";
 import { getTypography, type Typography } from "./typography.js";
 
 /** Splits the pages to measure into one origin and their paths. Throws on anything that can't be a baseline. */
@@ -44,6 +45,7 @@ function concerns(where: string, t: Typography): string[] {
     if (!f.axes) lines.push(`${where}: a font file of ${f.name} could not be read, so its variable axes are unknown`);
     for (const face of f.faces) if (face.status === "error") lines.push(`${where}: font face failed to load: ${f.name} ${face.weight} ${face.style}`);
   }
+  if (t.hidden) lines.push(`${where}: hidden at load, so not measured: ${hiddenText(t.hidden)}`);
   return [...lines, ...t.unmeasured.map((u) => `${where}: not measured: ${u}`)];
 }
 

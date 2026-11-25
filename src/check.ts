@@ -13,39 +13,48 @@ export interface PageResult {
   unmeasured: string[];
 }
 
-// shortcut: shows 5 selectors per finding; raise it if agents need more to find the cause.
-const MAX_WHERE = 5;
+// shortcut: shows 5 places and 5 of each other list per finding; raise it if agents need more to find the cause.
+const MAX_ITEMS = 5;
 
-/** Groups equal items from several viewports, so one mistake is one finding. */
-function group<T>(results: PageResult[], pick: (r: PageResult) => T[]): { item: T; place: string }[] {
-  const groups = new Map<string, { item: T; path: string; viewports: string[] }>();
-  for (const r of results) {
-    for (const item of pick(r)) {
-      const key = JSON.stringify([r.path, item]);
-      const seen = groups.get(key);
-      if (seen) seen.viewports.push(r.viewport);
-      else groups.set(key, { item, path: r.path, viewports: [r.viewport] });
-    }
+/** Lists things seen on several pages and viewports once each, with where they were seen. */
+function places(items: { path: string; viewport: string; text: string }[]): string[] {
+  const seen = new Map<string, { path: string; text: string; viewports: Set<string> }>();
+  for (const { path, viewport, text } of items) {
+    const key = JSON.stringify([path, text]);
+    const place = seen.get(key) ?? { path, text, viewports: new Set<string>() };
+    seen.set(key, place);
+    place.viewports.add(viewport);
   }
-  return [...groups.values()].map(({ item, path, viewports }) => ({ item, place: `${path} (${[...new Set(viewports)].join(", ")})` }));
+  return [...seen.values()].map((p) => `${p.path} (${[...p.viewports].join(", ")}): ${p.text}`);
 }
+
+const limit = (lines: string[]) => (lines.length > MAX_ITEMS ? [...lines.slice(0, MAX_ITEMS), `and ${lines.length - MAX_ITEMS} more`] : lines);
+const unique = (lines: string[]) => [...new Set(lines)];
 
 /** The report and its exit code: 0 no drift, 1 drift, 2 something couldn't be checked and no drift was found. */
 export function report(results: PageResult[]): { code: 0 | 1 | 2; text: string } {
-  const drift = group(results, (r) => r.drift);
-  const notes = group(results, (r) => r.notes);
-  const unmeasured = group(results, (r) => r.unmeasured);
-  const blocks = drift.map(({ item, place }) => {
-    const more = item.where.length - MAX_WHERE;
-    const where = item.where.slice(0, MAX_WHERE).map((w) => `  at   ${w}`);
-    return [`DRIFT  ${item.found}`, `  page ${place}`, ...where, ...(more > 0 ? [`  and ${more} more`] : []), `  fix  ${item.fix}`].join("\n");
+  const causes = new Map<string, { path: string; viewport: string; finding: Finding }[]>();
+  for (const { path, viewport, drift } of results) {
+    for (const finding of drift) causes.set(finding.cause, [...(causes.get(finding.cause) ?? []), { path, viewport, finding }]);
+  }
+  const blocks = [...causes.values()].map((group) => {
+    const where = places(group.flatMap(({ path, viewport, finding }) => finding.where.map((text) => ({ path, viewport, text }))));
+    return [
+      ...limit(unique(group.map((g) => g.finding.found))).map((f, i) => `${i ? "  also" : "DRIFT "} ${f}`),
+      ...limit(where).map((w) => `  at   ${w}`),
+      ...limit(unique(group.flatMap((g) => g.finding.hints))).map((h) => `  hint ${h}`),
+      ...unique(group.map((g) => g.finding.fix)).map((f) => `  fix  ${f}`),
+    ].join("\n");
   });
-  if (unmeasured.length) blocks.push(["NOT CHECKED", ...unmeasured.map((u) => `  ${u.place}: ${u.item}`)].join("\n"));
-  if (notes.length) blocks.push(["Notes (these don't fail the check)", ...notes.map((n) => `  ${n.place}: ${n.item}`)].join("\n"));
+  const list = (pick: (r: PageResult) => string[]) => places(results.flatMap((r) => pick(r).map((text) => ({ path: r.path, viewport: r.viewport, text }))));
+  const unmeasured = list((r) => r.unmeasured);
+  const notes = list((r) => r.notes);
+  if (unmeasured.length) blocks.push(["NOT CHECKED", ...unmeasured.map((u) => `  ${u}`)].join("\n"));
+  if (notes.length) blocks.push(["Notes (these don't fail the check)", ...notes.map((n) => `  ${n}`)].join("\n"));
 
-  const code = drift.length ? 1 : unmeasured.length ? 2 : 0;
+  const code = causes.size ? 1 : unmeasured.length ? 2 : 0;
   const summary =
-    code === 1 ? `${drift.length} finding${drift.length === 1 ? "" : "s"}. Fix the app. If a change is intended, ask the developer to update the baseline.`
+    code === 1 ? `${causes.size} finding${causes.size === 1 ? "" : "s"}. Fix the app. If a change is intended, ask the developer to update the baseline.`
     : code === 2 ? "No drift found, but the check is incomplete, so this isn't a pass."
     : "No drift.";
   return { code, text: [...blocks, summary].join("\n\n") };
