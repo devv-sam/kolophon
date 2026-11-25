@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { BASELINE_FILE, BASELINE_VERSION, serialize, toView, type Baseline } from "./baseline.js";
 import { VIEWPORTS, withPage } from "./browser.js";
 import { hiddenText } from "./compare.js";
+import { getMotion, type Motion } from "./motion.js";
 import { getTypography, type Typography } from "./typography.js";
 
 /** Splits the pages to measure into one origin and their paths. Throws on anything that can't be a baseline. */
@@ -23,14 +24,27 @@ export function parseUrls(urls: string[]): { baseUrl: string; paths: string[] } 
 }
 
 /** Measures one page. A page without text is an error: it's more likely broken than empty by design. */
-export async function measurePage(url: string, name: string): Promise<Typography> {
-  const t = await withPage(url, getTypography, VIEWPORTS[name as keyof typeof VIEWPORTS]);
+export async function measurePage(url: string, name: string): Promise<{ t: Typography; m: Motion | null }> {
+  const { t, m } = await withPage(
+    url,
+    async (page) => {
+      const t = await getTypography(page);
+      try {
+        return { t, m: await getMotion(page) };
+      } catch (err) {
+        // Keeps the typography.
+        t.unmeasured.push(`Motion could not be read: ${(err as Error).message}`);
+        return { t, m: null };
+      }
+    },
+    VIEWPORTS[name as keyof typeof VIEWPORTS],
+  );
   if (!t.styles.length) throw new Error(`${url} shows no text at the ${name} viewport, so there is nothing to measure.`);
-  return t;
+  return { t, m };
 }
 
 /** What a person should look at before committing, one line each. */
-function concerns(where: string, t: Typography): string[] {
+function concerns(where: string, t: Typography, m: Motion): string[] {
   const lines: string[] = [];
   for (const s of t.styles) {
     const label = `${s.family} ${s.size} weight ${s.weight} at ${s.selector}`;
@@ -45,6 +59,9 @@ function concerns(where: string, t: Typography): string[] {
     if (!f.axes) lines.push(`${where}: a font file of ${f.name} could not be read, so its variable axes are unknown`);
     for (const face of f.faces) if (face.status === "error") lines.push(`${where}: font face failed to load: ${f.name} ${face.weight} ${face.style}`);
   }
+  for (const a of m.animations) if (!a.keyframes.length) lines.push(`${where}: animation ${a.name} has no @keyframes, so nothing moves: at ${a.selector}`);
+  const still = m.reduced.transitions.length + m.reduced.animations.filter((a) => a.keyframes.length).length;
+  if (still) lines.push(`${where}: ${still} of ${m.transitions.length + m.animations.length} transitions and animations still run when the user asks for reduced motion`);
   if (t.hidden) lines.push(`${where}: hidden at load, so not measured: ${hiddenText(t.hidden)}`);
   return [...lines, ...t.unmeasured.map((u) => `${where}: not measured: ${u}`)];
 }
@@ -72,11 +89,12 @@ export async function snapshot(urls: string[], { dir, update }: { dir: string; u
   for (const path of paths) {
     baseline.pages[path] = {};
     for (const name of Object.keys(VIEWPORTS)) {
-      const t = await measurePage(baseUrl + path, name);
-      const view = toView(t);
+      const { t, m } = await measurePage(baseUrl + path, name);
+      if (!m) throw new Error(`${baseUrl + path} (${name}): ${t.unmeasured.at(-1)}`);
+      const view = toView(t, m);
       baseline.pages[path][name] = view;
-      measured.push(`${path} (${name}): ${view.styles.length} text styles, ${view.fonts.length} fonts`);
-      look.push(...concerns(`${path} (${name})`, t));
+      measured.push(`${path} (${name}): ${view.styles.length} text styles, ${view.fonts.length} fonts, ${view.motion.transitions.length} transitions, ${view.motion.animations.length} animations`);
+      look.push(...concerns(`${path} (${name})`, t, m));
     }
   }
 

@@ -9,7 +9,8 @@ const style = (over = {}) => ({
   rendered: [{ name: "Menlo", custom: false, glyphs: 10 }], fallbackGlyphs: 0, weightCovered: null, ...over,
 });
 const family = (over = {}) => ({ name: "Inter", stack: "Inter, sans-serif", chars: 1, webFont: true, faces: [], variable: false, axes: [], ...over });
-const view = (styles, families = [family()]) => toView({ styles, families, unmeasured: [], hidden: 0 });
+const noMotion = { transitions: [], animations: [], reduced: { transitions: [], animations: [] } };
+const view = (styles, families = [family()]) => toView({ styles, families, unmeasured: [], hidden: 0 }, noMotion);
 
 test("keeps design values and nothing that varies with content or machine", () => {
   const v = view([style()]);

@@ -1,8 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
+import type { Animation, Motion, MotionSet, Transition } from "./motion.js";
 import type { TextStyle, Typography } from "./typography.js";
 
 export const BASELINE_FILE = "kolophon.json";
-export const BASELINE_VERSION = 1;
+export const BASELINE_VERSION = 2;
 
 export interface BaselineFont {
   family: string;
@@ -25,9 +26,32 @@ export interface BaselineStyle {
   weightCovered?: false;
 }
 
+export interface BaselineTransition {
+  property: string;
+  duration: string;
+  easing: string;
+}
+
+export interface BaselineAnimation {
+  duration: string;
+  easing: string;
+  iterations: string;
+  direction: string;
+  /** Empty when the animation has no @keyframes, so nothing moves. */
+  keyframes: string[];
+}
+
+export interface BaselineMotion {
+  transitions: BaselineTransition[];
+  animations: BaselineAnimation[];
+}
+
 export interface BaselineView {
   fonts: BaselineFont[];
   styles: BaselineStyle[];
+  motion: BaselineMotion;
+  /** What still moves when the user asks for reduced motion. */
+  reducedMotion: BaselineMotion;
 }
 
 export interface Baseline {
@@ -65,14 +89,36 @@ export function toStyle(s: TextStyle): BaselineStyle {
   return style;
 }
 
-/** Keeps only design values: no counts, text, selectors or names of installed fonts. */
-export function toView(t: Typography): BaselineView {
+export const toTransition = (t: Transition): BaselineTransition => ({ property: t.property, duration: `${t.duration}ms`, easing: t.easing });
+
+export const toAnimation = (a: Animation): BaselineAnimation => ({
+  duration: `${a.duration}ms`,
+  easing: a.easing,
+  iterations: a.iterations,
+  direction: a.direction,
+  keyframes: a.keyframes,
+});
+
+export const transitionKey = (t: BaselineTransition) => [t.property, t.duration.padStart(10), t.easing].join("|");
+export const animationKey = (a: BaselineAnimation) => JSON.stringify([a.keyframes, a.duration.padStart(10), a.easing, a.iterations, a.direction]);
+
+function toMotion(m: MotionSet): BaselineMotion {
+  // Two names for the same keyframes are one animation.
+  const distinct = <T>(items: T[], key: (item: T) => string) => [...new Map(items.map((i) => [key(i), i])).values()].sort(byKey(key));
+  return { transitions: distinct(m.transitions.map(toTransition), transitionKey), animations: distinct(m.animations.map(toAnimation), animationKey) };
+}
+
+export function toFonts(t: Typography): BaselineFont[] {
   const fonts = new Map<string, BaselineFont>();
   for (const f of t.families) {
     const axes = f.axes && f.axes.map((a) => `${a.tag} ${a.min}..${a.max}`).sort();
     fonts.set(f.name, { family: f.name, webFont: f.webFont, axes });
   }
+  return [...fonts.values()].sort(byKey((f) => f.family));
+}
 
+/** Keeps only design values: no counts, text, selectors or names of installed fonts. */
+export function toView(t: Typography, m: Motion): BaselineView {
   const styles = new Map<string, BaselineStyle>();
   for (const s of t.styles) {
     const style = toStyle(s);
@@ -84,8 +130,10 @@ export function toView(t: Typography): BaselineView {
     styles.set(key, style);
   }
   return {
-    fonts: [...fonts.values()].sort(byKey((f) => f.family)),
+    fonts: toFonts(t),
     styles: [...styles.values()].sort(byKey(styleKey)),
+    motion: toMotion(m),
+    reducedMotion: toMotion(m.reduced),
   };
 }
 
@@ -98,19 +146,29 @@ export function serialize(b: Baseline): string {
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const STYLE_FIELDS = ["family", "size", "lineHeight", "weight", "letterSpacing", "style", "variationSettings"] as const;
 
+const hasStrings = (v: unknown, fields: readonly string[]) => isObject(v) && fields.every((k) => typeof v[k] === "string");
+const isStrings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+const isMotion = (v: unknown) =>
+  isObject(v) &&
+  Array.isArray(v.transitions) &&
+  v.transitions.every((t) => hasStrings(t, ["property", "duration", "easing"])) &&
+  Array.isArray(v.animations) &&
+  v.animations.every((a) => hasStrings(a, ["duration", "easing", "iterations", "direction"]) && isStrings(a.keyframes));
+
 function isView(v: unknown): v is BaselineView {
   return (
     isObject(v) &&
     Array.isArray(v.fonts) &&
-    v.fonts.every((f) => isObject(f) && typeof f.family === "string" && typeof f.webFont === "boolean" && (f.axes === null || (Array.isArray(f.axes) && f.axes.every((a) => typeof a === "string")))) &&
+    v.fonts.every((f) => isObject(f) && typeof f.family === "string" && typeof f.webFont === "boolean" && (f.axes === null || isStrings(f.axes))) &&
     Array.isArray(v.styles) &&
     v.styles.every(
       (s) =>
-        isObject(s) &&
-        STYLE_FIELDS.every((k) => typeof s[k] === "string") &&
+        hasStrings(s, STYLE_FIELDS) &&
         [undefined, "all", "some"].includes(s.fallback as string | undefined) &&
         [undefined, false].includes(s.weightCovered as false | undefined),
-    )
+    ) &&
+    isMotion(v.motion) &&
+    isMotion(v.reducedMotion)
   );
 }
 
@@ -124,7 +182,7 @@ export function parseBaseline(text: string, viewports: Record<string, object>): 
   }
   if (!isObject(b)) throw new Error(`${BASELINE_FILE} isn't a kolophon baseline.`);
   if (b.version !== BASELINE_VERSION) {
-    throw new Error(`${BASELINE_FILE} has format version ${String(b.version)}; this kolophon reads version ${BASELINE_VERSION}. The developer needs to make a new baseline.`);
+    throw new Error(`${BASELINE_FILE} has format version ${String(b.version)}; this kolophon reads version ${BASELINE_VERSION}. The developer needs to make a new baseline: kolophon snapshot <url...> --update`);
   }
   if (!isDeepStrictEqual(b.viewports, viewports)) {
     throw new Error(`${BASELINE_FILE} was measured at different viewports. The developer needs to make a new baseline.`);

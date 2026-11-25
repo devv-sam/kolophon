@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Motion fixture</title>
+    <style>
+      :root { --rise: 30px; }
+      * { animation-fill-mode: both; }
+      @keyframes rise_x1y2 { from { opacity: 0; transform: translateY(var(--rise)); } to { opacity: 1; transform: none; } }
+      #ended { animation: rise_x1y2 10ms ease-out; }
+      #lost { animation: missing 1s; }
+      #buttons button { transition: opacity 150ms ease-in, transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+      #buttons button:nth-child(2) { transition-delay: 70ms; }
+      #menu { display: none; transition: opacity 0.2s; }
+      #unseen { display: none; animation: rise_x1y2 2s; }
+      #still { transition: color 0.2s; }
+      @media (prefers-reduced-motion: reduce) {
+        #ended, #lost { animation: none; }
+        #buttons button { transition-duration: 0.01ms; }
+        #menu { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <p id="ended">Rises</p>
+    <p id="lost">No keyframes</p>
+    <div id="buttons"><button>One</button><button>Two</button></div>
+    <nav id="menu">Menu</nav>
+    <p id="unseen">Unseen</p>
+    <p id="still">Always fades</p>
+  </body>
+</html>
