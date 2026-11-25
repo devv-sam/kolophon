@@ -56,6 +56,14 @@ test("a recorded font problem passes until it gets worse", () => {
   assert.equal(compare(toView(covered(true)), covered(false)).drift.length, 1);
 });
 
+test("a new style doesn't report its font's recorded problem again", () => {
+  const liberation = { rendered: [{ name: "Liberation Sans", custom: false, glyphs: 10 }], weightCovered: false };
+  const at = (size, fallbackGlyphs) => page([style({ ...liberation, size, fallbackGlyphs })]);
+  const found = (from, to) => compare(toView(at("16px", from)), at("15px", to)).drift.length;
+  assert.equal(found(10, 10), 1, "only the new size");
+  assert.equal(found(4, 10), 2, "worse than recorded");
+});
+
 test("a font that fell back is one finding for all its styles, saying why", () => {
   const menlo = { fallbackGlyphs: 10, rendered: [{ name: "Menlo", custom: false, glyphs: 10 }], weightCovered: null };
   const faces = (status) => [family({ faces: [{ weight: "400", style: "normal", status }], axes: [] })];

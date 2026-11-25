@@ -79,8 +79,11 @@ export function compare(baseline: BaselineView, t: Typography): Comparison {
           (near && missing.length && !missing.includes(near) ? ` Or it may have been one no longer seen here: ${missing.slice(0, 3).map(describe).join(" | ")}.` : ""),
       });
     }
-    if (SEVERITY[style.fallback ?? "none"] > SEVERITY[match?.fallback ?? "none"]) put(fellBack, s.family, s);
-    if (style.weightCovered === false && match?.weightCovered !== false) put(uncovered, `${s.family}|${s.weight}`, s);
+    // A new style is already a finding, so it only adds a font problem its font doesn't have in the baseline.
+    const accepted = match ? [match] : baseline.styles.filter((b) => b.family === style.family);
+    const worst = Math.max(0, ...accepted.map((b) => SEVERITY[b.fallback ?? "none"]));
+    if (SEVERITY[style.fallback ?? "none"] > worst) put(fellBack, s.family, s);
+    if (style.weightCovered === false && !accepted.some((b) => b.weight === style.weight && b.weightCovered === false)) put(uncovered, `${s.family}|${s.weight}`, s);
   }
 
   for (const [stack, styles] of fellBack) {
