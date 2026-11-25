@@ -4,8 +4,7 @@ Issues and pull requests are welcome.
 
 ## Branches
 
-v2 work happens on the `v2` branch. Branch features off `v2`, not `main`, and
-open PRs against `v2`. Nothing merges to `main` until a phase is stable.
+Branch from `main` and open PRs against `main`.
 
 ## Commits
 
@@ -15,7 +14,7 @@ present tense, under 72 characters:
 ```
 feat: add retry to the fetch step
 fix: resolve fallback font detection on variable fonts
-docs: update README for v2 scope
+docs: shorten the install steps
 ```
 
 Types: `feat`, `fix`, `chore`, `refactor`, `docs`.
