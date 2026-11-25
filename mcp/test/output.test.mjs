@@ -35,9 +35,16 @@ test("guidance covers variable fonts, fallbacks and tracking", () => {
   assert.match(md, /3 weight steps in use: 400 \/ 510 \/ 700 \(Tailwind: 400 → font-normal, 510 → font-medium, 700 → font-bold\)/);
   assert.match(md, /Any weight from 100 to 900 works; this page uses in-between weights \(510\), so use arbitrary values like `font-\[510\]`/);
   assert.match(md, /optical size axis/);
-  assert.match(md, /\*\*Brand Serif\*\* did not render on this page; Times was used instead/);
+  assert.match(md, /\*\*Brand Serif\*\* failed to load on this page, so Times rendered instead\. Ship its font files/);
   assert.match(md, /\| Brand Serif \| 11% \| web font, \*\*failed to load\*\* \|/);
   assert.match(md, /Letter spacing is tuned per size: -0.165px at 15px/);
+});
+
+test("a missing system font gets system-font advice", () => {
+  const arial = family("Arial", "Arial, sans-serif", { webFont: false, fallback: true, rendered: [{ name: "Liberation Sans", custom: false, glyphs: 9 }] });
+  const md = toDesignMd({ families: [arial], styles: [style(arial.stack, "16px", "400")] }, page);
+  assert.match(md, /\*\*Arial\*\* isn't installed on the machine that extracted this, so Liberation Sans rendered instead\. It's a system font: keep it in the stack/);
+  assert.doesNotMatch(md, /font files/);
 });
 
 test("tokens reference families and omit unknown line heights", () => {

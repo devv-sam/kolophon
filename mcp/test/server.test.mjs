@@ -1,7 +1,9 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -40,9 +42,9 @@ after(async () => {
   http?.close();
 });
 
-test("lists get_typography", async () => {
+test("lists the tools", async () => {
   const { tools } = await client.listTools();
-  assert.ok(tools.some((t) => t.name === "get_typography"));
+  assert.deepEqual(tools.map((t) => t.name).sort(), ["get_design_sheet", "get_motion", "get_typography"]);
 });
 
 test("reads a page served locally", async () => {
@@ -133,6 +135,84 @@ test("returns DESIGN.md, tokens and Tailwind", async () => {
 
   assert.match(tailwind, /^@theme \{\n {2}--font-arial: Arial, sans-serif;/);
   assert.match(tailwind, /--text-14-500--letter-spacing: 0\.5px;/);
+});
+
+test("extracts motion", async () => {
+  const res = await client.callTool({ name: "get_motion", arguments: { url: `${base}motion.html` } });
+  assert.ok(!res.isError, res.content[0].text);
+  const [designMd, , tailwind] = res.content.map((c) => c.text);
+  const m = raw(res);
+
+  const transition = (property) => m.transitions.find((t) => t.property === property);
+  assert.deepEqual(transition("background-color"), {
+    property: "background-color", duration: 150, easing: "cubic-bezier(0.4, 0, 0.2, 1)", delay: 0, elements: 2, tags: ["button"],
+  });
+  assert.equal(transition("opacity").delay, 50);
+  assert.equal(transition("transform").easing, "ease-out");
+
+  const kf = Object.fromEntries(m.keyframes.map((k) => [k.name, k]));
+  assert.deepEqual(kf.rise.properties, ["opacity", "transform"]);
+  assert.equal(kf.rise.usedBy[0].selector, ".reveal");
+  assert.match(kf.rise.usedBy[0].resolved, /^rise 700ms cubic-bezier\(\.16,1,\.3,1\) calc\( ?0 \* 80ms ?\) both$/);
+  assert.deepEqual(kf.pop.properties, ["transform"], "per-step easing isn't an animated property");
+  assert.equal(kf.spin.usedBy[0].selector, ".spinner", "keyframes in a linked stylesheet are read");
+
+  assert.deepEqual(m.reducedMotion.reduce, [".reveal"]);
+  assert.deepEqual(m.animations.map((a) => a.name).sort(), ["rise", "spin"]);
+  assert.deepEqual(m.scriptAnimations, [{ duration: 100000, easing: "ease-out", properties: ["opacity"], count: 1 }]);
+
+  assert.match(designMd, /^# Motion — Motion fixture/);
+  assert.match(designMd, /Overshooting \(springy\) curves give `pop` a bounce/);
+  assert.match(designMd, /switches off motion for `\.reveal`/);
+  assert.match(tailwind, /--ease-spring-1: cubic-bezier\(0\.34, 1\.56, 0\.64, 1\);/);
+  assert.match(tailwind, /@keyframes spin \{/);
+
+  // Only visible by interacting: a JS hover animation, a frame-by-frame hover loop, a reveal on scroll.
+  assert.equal(m.interaction.completed, true, JSON.stringify(m.interaction));
+  assert.ok(m.triggered.some((t) => t.trigger === "hover" && t.type === "WebAnimation" && t.duration === 240), JSON.stringify(m.triggered));
+  assert.ok(m.triggered.some((t) => t.trigger === "scroll" && t.type === "CSSAnimation" && t.name === "slide-in"), JSON.stringify(m.triggered));
+  const glow = m.scriptedStyles.find((st) => st.element === "div.glow");
+  assert.deepEqual([glow?.trigger, glow?.properties], ["hover", ["opacity"]], JSON.stringify(m.scriptedStyles));
+});
+
+test("keeps load-time motion when the page navigates during interaction", async () => {
+  const res = await client.callTool({ name: "get_motion", arguments: { url: `${base}motion-navigates.html` } });
+  assert.ok(!res.isError, res.content[0].text);
+  const m = raw(res);
+  assert.equal(m.interaction.completed, false);
+  assert.match(m.interaction.note, /navigated/);
+  assert.equal(m.transitions[0].property, "opacity", "static results survive");
+  assert.match(res.content[0].text, /stopped early/);
+});
+
+test("skips interaction when asked", async () => {
+  const res = await client.callTool({ name: "get_motion", arguments: { url: `${base}motion.html`, interactions: false } });
+  const m = raw(res);
+  assert.deepEqual([m.interaction.ran, m.triggered.length, m.scriptedStyles.length], [false, 0, 0]);
+  assert.ok(m.keyframes.length > 0);
+});
+
+test("renders a design sheet as PNG and PDF", async () => {
+  const pdf = join(tmpdir(), `kolophon-test-${process.pid}.pdf`);
+  try {
+    const res = await client.callTool({ name: "get_design_sheet", arguments: { url: `${base}fonts.html`, pdf_path: pdf, interactions: false } });
+    assert.ok(!res.isError, res.content.at(-1).text);
+    const [image, note] = res.content;
+    assert.equal(image.mimeType, "image/png");
+    const png = Buffer.from(image.data, "base64");
+    assert.equal(png.subarray(1, 4).toString(), "PNG");
+    assert.equal(png.readUInt32BE(16), 1200, "full sheet width");
+    assert.match(note.text, /PDF saved to/);
+    assert.equal((await readFile(pdf)).subarray(0, 5).toString(), "%PDF-");
+  } finally {
+    await rm(pdf, { force: true });
+  }
+});
+
+test("rejects a relative or non-PDF pdf_path", async () => {
+  const res = await client.callTool({ name: "get_design_sheet", arguments: { url: `${base}basic.html`, pdf_path: "sheet.png", interactions: false } });
+  assert.equal(res.isError, true);
+  assert.match(res.content[0].text, /absolute path ending in \.pdf/);
 });
 
 test("rejects non-http URLs", async () => {
