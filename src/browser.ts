@@ -12,6 +12,10 @@ export const VIEWPORTS = {
   mobile: { width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true },
 } satisfies Record<string, Viewport>;
 
+// A machine with no mouse, such as a CI runner, otherwise reports `hover: none` on desktop.
+// Touch emulation still overrides this on mobile.
+const MOUSE = "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4";
+
 // One headless Chrome per process, started on first use.
 function getBrowser(): Promise<Browser> {
   browser ??= (async () => {
@@ -22,7 +26,7 @@ function getBrowser(): Promise<Browser> {
       if (chromePath) await access(chromePath, constants.X_OK);
       chrome = await launch({
         chromePath,
-        chromeFlags: ["--headless=new", "--disable-gpu"],
+        chromeFlags: ["--headless=new", "--disable-gpu", MOUSE],
       });
     } catch (err) {
       browser = undefined;
@@ -60,6 +64,11 @@ export async function withPage<T>(url: string, fn: (page: Page) => Promise<T>, v
   const page = await (await getBrowser()).newPage();
   try {
     await page.setViewport(viewport);
+    // Otherwise taken from the machine's own settings.
+    await page.emulateMediaFeatures([
+      { name: "prefers-color-scheme", value: "light" },
+      { name: "prefers-reduced-motion", value: "no-preference" },
+    ]);
     const response = await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
     // 304 is a cached copy of the page, not an error.
     if (response && !response.ok() && response.status() !== 304) throw new Error(`${url} answered ${response.status()}`);

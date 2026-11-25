@@ -115,6 +115,17 @@ test("measures at the mobile viewport when asked", async () => {
   assert.deepEqual([desktop.weight, mobile.weight], ["400", "700"], "mobile has no hover");
 });
 
+test("doesn't depend on the machine's mouse or display settings", async () => {
+  const media = (viewport) =>
+    withPage(
+      `${base}basic.html`,
+      (page) => page.evaluate(() => ["(hover: hover)", "(pointer: fine)", "(prefers-color-scheme: light)", "(prefers-reduced-motion: no-preference)"].map((q) => matchMedia(q).matches)),
+      viewport,
+    );
+  assert.deepEqual(await media(VIEWPORTS.desktop), [true, true, true, true]);
+  assert.deepEqual(await media(VIEWPORTS.mobile), [false, false, true, true]);
+});
+
 test("measures the text in form fields", async () => {
   const t = await measure("forms.html");
   assert.deepEqual(t.unmeasured, []);
