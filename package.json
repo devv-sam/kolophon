@@ -16,6 +16,9 @@
   },
   "homepage": "https://github.com/devv-sam/kolophon#readme",
   "bugs": "https://github.com/devv-sam/kolophon/issues",
+  "bin": {
+    "kolophon": "dist/cli.js"
+  },
   "scripts": {
     "build": "tsc",
     "compile": "tsc --noEmit",
