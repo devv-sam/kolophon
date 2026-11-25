@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fallback fixture</title>
+    <style>
+      /* Font licenses: fonts/LICENSE.txt and fonts/Inter-LICENSE.txt (SIL Open Font License 1.1) */
+      /* The bold face is missing, so 700 falls back while 400 loads. */
+      @font-face { font-family: "Half Loaded"; src: url(fonts/Ronzino-Regular.woff2) format("woff2"); font-weight: 400; unicode-range: U+0020-007E; }
+      @font-face { font-family: "Half Loaded"; src: url(fonts/missing.woff2) format("woff2"); font-weight: 700; }
+      @font-face { font-family: "Broken Font"; src: url(fonts/missing.woff2) format("woff2"); }
+      @font-face { font-family: "Second Font"; src: url(fonts/InterVariable.woff2) format("woff2"); }
+      p { font: 400 16px/24px "Half Loaded", serif; }
+      #bold { font-weight: 700; }
+      #second { font-family: "Broken Font", "Second Font"; }
+      #parent { font-size: 20px; }
+      #parent span { font-family: "Second Font"; }
+      #late { font-size: 22px; }
+    </style>
+  </head>
+  <body>
+    <p id="regular">Loads fine</p>
+    <p id="bold">Bold falls back</p>
+    <p id="second">Saved by another web font</p>
+    <p id="parent">Parent <span>child in another font</span></p>
+    <p id="late">Plain</p>
+    <p class="late" style="font-size: 22px">éé</p>
+  </body>
+</html>
