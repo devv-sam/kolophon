@@ -15,8 +15,5 @@
     "url": "https://github.com/devv-sam/kolophon.git"
   },
   "homepage": "https://github.com/devv-sam/kolophon#readme",
-  "bugs": "https://github.com/devv-sam/kolophon/issues",
-  "scripts": {
-    "compile": "pnpm --filter @kolophon/mcp compile"
-  }
+  "bugs": "https://github.com/devv-sam/kolophon/issues"
 }
