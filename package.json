@@ -1,6 +1,6 @@
 {
   "name": "kolophon",
-  "description": "Design context for AI coding agents.",
+  "description": "Design checks for UI built by coding agents, measured on the rendered page.",
   "private": true,
   "version": "2.0.0-alpha.0",
   "type": "module",
