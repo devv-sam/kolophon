@@ -152,6 +152,12 @@ test("finds weights no loaded face covers", async () => {
   });
 });
 
+test("emoji don't count as fallback", async (t) => {
+  const [s] = (await measure("emoji.html")).styles;
+  if (!s.rendered.some((f) => /emoji/i.test(f.name))) return t.skip("no emoji font on this machine");
+  assert.equal(s.fallbackGlyphs, 0, JSON.stringify(s.rendered));
+});
+
 test("measuring twice gives the same result", async () => {
   assert.deepEqual(await measure("fallback.html"), await measure("fallback.html"));
 });
