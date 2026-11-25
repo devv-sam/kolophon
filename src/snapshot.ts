@@ -21,6 +21,13 @@ export function parseUrls(urls: string[]): { baseUrl: string; paths: string[] } 
   return { baseUrl: parsed[0].origin, paths: [...new Set(parsed.map((u) => u.pathname + u.search + u.hash))] };
 }
 
+/** Measures one page. A page without text is an error: it's more likely broken than empty by design. */
+export async function measurePage(url: string, name: string): Promise<Typography> {
+  const t = await withPage(url, getTypography, VIEWPORTS[name as keyof typeof VIEWPORTS]);
+  if (!t.styles.length) throw new Error(`${url} shows no text at the ${name} viewport, so there is nothing to measure.`);
+  return t;
+}
+
 /** What a person should look at before committing, one line each. */
 function concerns(where: string, t: Typography): string[] {
   const lines: string[] = [];
@@ -34,6 +41,7 @@ function concerns(where: string, t: Typography): string[] {
     if (s.weightCovered === false) lines.push(`${where}: no loaded font face covers the weight: ${label}`);
   }
   for (const f of t.families) {
+    if (!f.axes) lines.push(`${where}: a font file of ${f.name} could not be read, so its variable axes are unknown`);
     for (const face of f.faces) if (face.status === "error") lines.push(`${where}: font face failed to load: ${f.name} ${face.weight} ${face.style}`);
   }
   return [...lines, ...t.unmeasured.map((u) => `${where}: not measured: ${u}`)];
@@ -61,9 +69,8 @@ export async function snapshot(urls: string[], { dir, update }: { dir: string; u
   const measured: string[] = [];
   for (const path of paths) {
     baseline.pages[path] = {};
-    for (const [name, viewport] of Object.entries(VIEWPORTS)) {
-      const t = await withPage(baseUrl + path, getTypography, viewport);
-      if (!t.styles.length) throw new Error(`${baseUrl + path} shows no text at the ${name} viewport, so there is nothing to measure.`);
+    for (const name of Object.keys(VIEWPORTS)) {
+      const t = await measurePage(baseUrl + path, name);
       const view = toView(t);
       baseline.pages[path][name] = view;
       measured.push(`${path} (${name}): ${view.styles.length} text styles, ${view.fonts.length} fonts`);

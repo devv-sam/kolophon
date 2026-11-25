@@ -54,8 +54,8 @@ export interface FontFamily {
   faces: FontFaceInfo[];
   /** One of the family's font files has variation axes. */
   variable: boolean;
-  /** Axes across the family's font files, ranges widened to cover all of them. */
-  axes: FontAxis[];
+  /** Axes across the family's font files, ranges widened to cover all of them; null when a file couldn't be read. */
+  axes: FontAxis[] | null;
 }
 
 export interface Typography {
@@ -325,12 +325,6 @@ export async function getTypography(page: Page): Promise<Typography> {
   }
 
   const loadedFamilies = new Set(Object.entries(data.faces).filter(([, f]) => f.some((x) => x.status === "loaded")).map(([name]) => name));
-  for (const { url, info } of fontFiles) {
-    const owners = fileFamilies.get(url);
-    if (!info && (!owners || [...owners].some((o) => loadedFamilies.has(o)))) {
-      unmeasured.push(`The font file ${url.slice(0, 200)} could not be read, so its variable axes are unknown.`);
-    }
-  }
 
   /** Names inside the font files declared for a CSS family. */
   const fileNames = (key: string) =>
@@ -339,6 +333,8 @@ export async function getTypography(page: Page): Promise<Typography> {
 
   const isFirstFamily = (key: string, f: RenderedFont): boolean => {
     const name = f.name.toLowerCase();
+    // Emoji come from the system's emoji font by design.
+    if (!f.custom && name.includes("emoji")) return true;
     if (GENERIC_FAMILIES.has(key)) return true;
     if (!data.faces[key]) return !f.custom && name === key;
     if (!f.custom) return localNames.get(key)?.has(name) ?? false;
@@ -371,6 +367,7 @@ export async function getTypography(page: Page): Promise<Typography> {
       const faces = data.faces[key] ?? [];
       const names = new Set([key, ...data.styles.flatMap((s, i) => (s.family === family.stack ? rendered[i].map((f) => f.name.toLowerCase()) : []))]);
       const axes = new Map<string, FontAxis>();
+      const unreadable = loadedFamilies.has(key) && fontFiles.some(({ url, info }) => !info && fileFamilies.get(url)?.has(key));
       for (const { url, info } of fontFiles) {
         // A file belongs to this family by its @font-face URL, or else by the name inside the file.
         const owners = fileFamilies.get(url);
@@ -383,7 +380,7 @@ export async function getTypography(page: Page): Promise<Typography> {
           } else axes.set(axis.tag, { ...axis });
         }
       }
-      return { ...family, webFont: faces.length > 0, faces, variable: axes.size > 0, axes: [...axes.values()] };
+      return { ...family, webFont: faces.length > 0, faces, variable: axes.size > 0, axes: unreadable ? null : [...axes.values()] };
     }),
   };
 }
