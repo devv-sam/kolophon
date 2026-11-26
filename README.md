@@ -1,12 +1,12 @@
 # kolophon
 
-A design check for UI built by coding agents. It opens your running app in Chrome, measures the fonts, text styles and motion it really shows, and reports what drifts from a baseline you committed.
+A design check for UI built by coding agents. It opens your running app in a Chromium-based browser (Chrome, Edge, Brave, ...), measures the fonts, text styles and motion it really shows, and reports what drifts from a baseline you committed.
 
 Work in progress. Not on npm yet.
 
 ## Install
 
-Needs Node 20+, pnpm and Chrome.
+Needs Node 20+, pnpm and a Chromium-based browser: Chrome, Chromium, Edge, Brave or Vivaldi. If kolophon doesn't find yours, set `CHROME_PATH` to its binary.
 
 ```bash
 git clone https://github.com/devv-sam/kolophon.git
