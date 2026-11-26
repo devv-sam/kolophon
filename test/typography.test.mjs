@@ -2,7 +2,7 @@ import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { closeBrowser, VIEWPORTS, withPage } from "../dist/browser.js";
+import { closeBrowser, findBrowser, VIEWPORTS, withPage } from "../dist/browser.js";
 import { getTypography } from "../dist/typography.js";
 
 const fixtures = new URL("./fixtures/", import.meta.url);
@@ -182,15 +182,36 @@ test("refuses non-http URLs", async () => {
   await assert.rejects(withPage("file:///etc/passwd", getTypography), /Only http and https/);
 });
 
-test("explains a missing Chrome", async () => {
+const withChromePath = async (path, fn) => {
   closeBrowser();
   const { CHROME_PATH } = process.env;
-  process.env.CHROME_PATH = "/nonexistent/chrome";
+  process.env.CHROME_PATH = path;
   try {
-    await assert.rejects(measure("basic.html"), /could not find Chrome/);
+    await fn();
   } finally {
     if (CHROME_PATH === undefined) delete process.env.CHROME_PATH;
     else process.env.CHROME_PATH = CHROME_PATH;
   }
-  assert.equal((await measure("basic.html")).styles.length, 2, "recovers once Chrome is found");
+};
+
+test("explains a CHROME_PATH that isn't there", async () => {
+  await withChromePath("/nonexistent/chrome", () => assert.rejects(measure("basic.html"), /CHROME_PATH is \/nonexistent\/chrome, which isn't an executable file/));
+  assert.equal((await measure("basic.html")).styles.length, 2, "recovers once a browser is found");
+});
+
+test("names a browser that was found but wouldn't start", { skip: process.platform === "win32" }, async () => {
+  await withChromePath("/usr/bin/false", () => assert.rejects(measure("basic.html"), /Found \/usr\/bin\/false but couldn't start it: /));
+});
+
+test("finds Chromium-based browsers other than Chrome, in order", async () => {
+  const only = (...present) => async (path) => present.includes(path);
+  const env = { PATH: "/usr/local/bin:/usr/bin", PROGRAMFILES: "C:\\Program Files", LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" };
+  const mac = (app) => `/Applications/${app}.app/Contents/MacOS/${app}`;
+
+  assert.equal(await findBrowser("darwin", env, "/Users/me", only(mac("Vivaldi"), mac("Brave Browser"))), mac("Brave Browser"));
+  assert.equal(await findBrowser("darwin", env, "/Users/me", only("/Users/me/Applications/Chromium.app/Contents/MacOS/Chromium")), "/Users/me/Applications/Chromium.app/Contents/MacOS/Chromium");
+  assert.equal(await findBrowser("linux", env, "/home/me", only("/usr/bin/microsoft-edge", "/usr/local/bin/vivaldi")), "/usr/bin/microsoft-edge");
+  assert.equal(await findBrowser("win32", env, "C:\\Users\\me", only("C:\\Users\\me\\AppData\\Local\\BraveSoftware\\Brave-Browser\\Application\\brave.exe")), "C:\\Users\\me\\AppData\\Local\\BraveSoftware\\Brave-Browser\\Application\\brave.exe");
+  assert.equal(await findBrowser("darwin", env, "/Users/me", only("/Applications/Arc.app/Contents/MacOS/Arc")), undefined, "Arc won't run headless");
+  assert.equal(await findBrowser("linux", {}, "/home/me", only("/usr/bin/google-chrome")), undefined, "no PATH, nothing to search");
 });

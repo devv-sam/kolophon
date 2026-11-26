@@ -5,7 +5,7 @@ description: Check that UI changes keep to the app's own design, as the browser 
 
 # kolophon
 
-`kolophon check` opens the running app in Chrome, measures the text styles, fonts and motion it really shows, and compares them with `kolophon.json`. The developer reviewed and committed that file. It's theirs.
+`kolophon check` opens the running app in a Chromium-based browser (Chrome, Edge, Brave, ...), measures the text styles, fonts and motion it really shows, and compares them with `kolophon.json`. The developer reviewed and committed that file. It's theirs.
 
 ## Run it
 

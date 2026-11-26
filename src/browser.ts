@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
-import { launch, type LaunchedChrome } from "chrome-launcher";
+import { homedir } from "node:os";
+import { Launcher, launch, type LaunchedChrome } from "chrome-launcher";
 import puppeteer, { type Browser, type CDPSession, type Page, type Viewport } from "puppeteer-core";
 
 let chrome: LaunchedChrome | undefined;
@@ -16,24 +17,56 @@ export const VIEWPORTS = {
 // Touch emulation still overrides this on mobile.
 const MOUSE = "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4";
 
-// One headless Chrome per process, started on first use.
+// chrome-launcher finds only Chrome, and Chromium only on Linux. Arc is left out: it never opens a debugging port when headless.
+const BROWSERS = [
+  { name: "Chrome", mac: "Google Chrome", linux: ["google-chrome", "google-chrome-stable"], win: "Google\\Chrome\\Application\\chrome.exe" },
+  { name: "Chromium", mac: "Chromium", linux: ["chromium", "chromium-browser"], win: "Chromium\\Application\\chrome.exe" },
+  { name: "Edge", mac: "Microsoft Edge", linux: ["microsoft-edge", "microsoft-edge-stable"], win: "Microsoft\\Edge\\Application\\msedge.exe" },
+  { name: "Brave", mac: "Brave Browser", linux: ["brave-browser"], win: "BraveSoftware\\Brave-Browser\\Application\\brave.exe" },
+  { name: "Vivaldi", mac: "Vivaldi", linux: ["vivaldi", "vivaldi-stable"], win: "Vivaldi\\Application\\vivaldi.exe" },
+];
+const NAMES = BROWSERS.map((b) => b.name).join(", ");
+
+/** The first Chromium-based browser installed, in the order of `BROWSERS`. `exists` is injected so tests need no browser. */
+export async function findBrowser(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, home: string, exists: (path: string) => Promise<boolean>): Promise<string | undefined> {
+  const paths =
+    platform === "darwin"
+      ? BROWSERS.flatMap(({ mac }) => ["/Applications", `${home}/Applications`].map((dir) => `${dir}/${mac}.app/Contents/MacOS/${mac}`))
+      : platform === "win32"
+        ? BROWSERS.flatMap(({ win }) => [env.PROGRAMFILES, env["PROGRAMFILES(X86)"], env.LOCALAPPDATA].filter(Boolean).map((root) => `${root}\\${win}`))
+        : BROWSERS.flatMap(({ linux }) => linux.flatMap((bin) => (env.PATH ?? "").split(":").filter(Boolean).map((dir) => `${dir}/${bin}`)));
+  for (const path of paths) if (await exists(path)) return path;
+  return undefined;
+}
+
+const executable = (path: string) => access(path, constants.X_OK).then(() => true, () => false);
+
+async function browserPath(): Promise<string> {
+  // chrome-launcher ignores a missing CHROME_PATH when searching, and crashes the
+  // process with an unhandled spawn error when given one, so check it here.
+  const set = process.env.CHROME_PATH;
+  if (set) {
+    if (await executable(set)) return set;
+    throw new Error(`CHROME_PATH is ${set}, which isn't an executable file. Point it at a Chromium-based browser (${NAMES}), or unset it so kolophon searches.`);
+  }
+  const found = Launcher.getFirstInstallation() ?? (await findBrowser(process.platform, process.env, homedir(), executable));
+  if (found) return found;
+  throw new Error(`Couldn't find a Chromium-based browser. kolophon looked for ${NAMES} where they usually install. Install one, or set CHROME_PATH to its binary.`);
+}
+
+// One headless browser per process, started on first use.
 function getBrowser(): Promise<Browser> {
   browser ??= (async () => {
     try {
-      // chrome-launcher ignores a missing CHROME_PATH when searching, and crashes the
-      // process with an unhandled spawn error when given one, so check it here.
-      const chromePath = process.env.CHROME_PATH;
-      if (chromePath) await access(chromePath, constants.X_OK);
-      chrome = await launch({
-        chromePath,
-        chromeFlags: ["--headless=new", "--disable-gpu", MOUSE],
-      });
+      const chromePath = await browserPath();
+      try {
+        chrome = await launch({ chromePath, chromeFlags: ["--headless=new", "--disable-gpu", MOUSE] });
+      } catch (err) {
+        throw new Error(`Found ${chromePath} but couldn't start it: ${err instanceof Error ? err.message : String(err)}. Set CHROME_PATH to another Chromium-based browser if this one won't run headless.`, { cause: err });
+      }
     } catch (err) {
       browser = undefined;
-      throw new Error(
-        "kolophon could not find Chrome. Install Google Chrome, or set CHROME_PATH to a Chrome/Chromium binary.",
-        { cause: err },
-      );
+      throw err;
     }
     return puppeteer.connect({ browserURL: `http://127.0.0.1:${chrome.port}` });
   })();
