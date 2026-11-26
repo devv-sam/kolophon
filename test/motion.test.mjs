@@ -56,7 +56,7 @@ test("reads animations with the keyframes the browser resolved, even after they 
   assert.deepEqual(animations.map((a) => a.selector), ["#ended", "#lost"], "not on elements that aren't displayed");
   const [rise, lost] = animations;
   assert.deepEqual([rise.duration, rise.easing, rise.iterations, rise.direction], [10, "ease-out", "1", "normal"]);
-  assert.deepEqual(rise.keyframes, ["0% opacity 0; transform translateY(30px);", "100% opacity 1; transform none;"]);
+  assert.deepEqual(rise.keyframes, ["0% opacity 0; transform matrix(1, 0, 0, 1, 0, 30);", "100% opacity 1; transform none;"]);
   assert.deepEqual(lost.keyframes, [], "there is no such @keyframes");
 });
 

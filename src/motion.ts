@@ -53,13 +53,26 @@ function extractMotion(): MotionSet {
     const effect = probe.getAnimations().find((a) => a instanceof CSSAnimation)?.effect;
     const frames = effect instanceof KeyframeEffect ? effect.getKeyframes() : [];
     probe.remove();
+    // getKeyframes() gives values as written, so translateX(-50%) and a minifier's translate(-50%) differ; a fixed-size box resolves both to one computed value.
+    const box = document.createElement("div");
+    for (const [property, value] of Object.entries({ display: "block", position: "absolute", width: "100px", height: "100px", transition: "none", animation: "none", visibility: "hidden" }))
+      box.style.setProperty(property, value, "important");
+    document.body.append(box);
+    const computed = (p: string, v: string) => {
+      const css = p.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+      box.style.setProperty(css, v, "important");
+      const out = box.style.getPropertyValue(css) ? getComputedStyle(box).getPropertyValue(css) : v;
+      box.style.removeProperty(css);
+      return out || v;
+    };
     const text = frames.map(({ offset, computedOffset, easing, composite, ...props }) =>
       [
         `${Math.round(computedOffset * 10000) / 100}%`,
-        ...Object.keys(props).sort().map((p) => `${p} ${props[p]};`),
+        ...Object.keys(props).sort().map((p) => `${p} ${computed(p, String(props[p]))};`),
         ...(easing === "linear" ? [] : [`easing ${easing};`]),
       ].join(" "),
     );
+    box.remove();
     resolved.set(name, text);
     return text;
   };

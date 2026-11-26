@@ -143,13 +143,13 @@ test("the report merges viewports and limits lists", () => {
 
 test("reads back what it writes, and refuses anything else", () => {
   const viewports = { desktop: { width: 1 } };
-  const good = { version: 2, baseUrl: "http://localhost:3000", viewports, pages: { "/": { desktop: base } } };
+  const good = { version: 3, baseUrl: "http://localhost:3000", viewports, pages: { "/": { desktop: base } } };
   assert.deepEqual(parseBaseline(serialize(good), viewports), good);
 
   const bad = (over) => () => parseBaseline(JSON.stringify({ ...good, ...over }), viewports);
   assert.throws(() => parseBaseline("{", viewports), /isn't valid JSON/);
   assert.throws(() => parseBaseline("null", viewports), /isn't a kolophon baseline/);
-  assert.throws(bad({ version: 1 }), /format version 1.*snapshot <url\.\.\.> --update/);
+  assert.throws(bad({ version: 2 }), /format version 2.*snapshot <url\.\.\.> --update/);
   assert.throws(bad({ viewports: { desktop: { width: 2 } } }), /different viewports/);
   assert.throws(bad({ pages: {} }), /no pages/);
   assert.throws(bad({ pages: { "/": {} } }), /incomplete for \/ \(desktop\)/);

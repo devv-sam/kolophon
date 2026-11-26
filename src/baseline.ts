@@ -3,7 +3,7 @@ import type { Animation, Motion, MotionSet, Transition } from "./motion.js";
 import type { TextStyle, Typography } from "./typography.js";
 
 export const BASELINE_FILE = "kolophon.json";
-export const BASELINE_VERSION = 2;
+export const BASELINE_VERSION = 3;
 
 export interface BaselineFont {
   family: string;

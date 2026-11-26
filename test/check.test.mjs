@@ -108,7 +108,12 @@ test("changed motion fails, and so does losing reduced-motion support", async ()
   assert.match(slower.stdout, /transition opacity 450ms ease-in\n {2}at {3}\/motion\.html \(desktop, mobile\): #buttons > button:nth-of-type\(1\)/);
 
   change = (html) => html.replace("--rise: 30px", "--rise: 90px");
-  assert.match((await run(["check"])).stdout, /translateY\(90px\)/);
+  assert.match((await run(["check"])).stdout, /matrix\(1, 0, 0, 1, 0, 90\)/);
+
+  // A minifier writes the same transform another way.
+  change = (html) => html.replace("translateY(var(--rise))", "translate(0, var(--rise))");
+  const rewritten = await run(["check"]);
+  assert.equal(rewritten.code, 0, rewritten.stdout + rewritten.stderr);
 
   change = (html) => html.replace("(prefers-reduced-motion: reduce)", "print");
   const reduced = await run(["check"]);
