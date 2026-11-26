@@ -52,7 +52,7 @@ test("writes a baseline for every page and viewport, the same way twice", async 
   const text = await read();
 
   const baseline = JSON.parse(text);
-  assert.equal(baseline.version, 2);
+  assert.equal(baseline.version, 3);
   assert.equal(baseline.baseUrl + "/", base);
   assert.deepEqual(Object.keys(baseline.viewports), ["desktop", "mobile"]);
   assert.deepEqual(Object.keys(baseline.pages), ["/responsive.html", "/typography.html"]);
