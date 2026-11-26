@@ -114,7 +114,11 @@ test("motion that starts running in reduced motion is drift", () => {
   assert.match(out, /^1 finding\./m);
 
   const added = set([transition({ duration: 999 })]);
-  assert.equal(diff(motion(set()), motion(added, added)).drift.length, 1, "new motion is reported once");
+  const once = diff(motion(set()), motion(added, added)).drift;
+  assert.equal(once.length, 1, "new motion is reported once");
+  assert.match(once[0].found, /Not in the baseline: .*, and it moves even when the user asks for reduced motion$/);
+  assert.match(once[0].fix, /Turn it off in @media \(prefers-reduced-motion: reduce\)\.$/);
+  assert.doesNotMatch(diff(motion(set()), motion(added)).drift[0].found, /reduced motion/, "not when reduced motion stops it");
 });
 
 test("one transition declaration is one finding", () => {
