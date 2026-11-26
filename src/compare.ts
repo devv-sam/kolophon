@@ -136,10 +136,16 @@ function compareMotion(baseline: BaselineView, m: Motion): Pick<Comparison, "dri
     fix: still ? "Check the animation name, or add its @keyframes." : "Use motion the baseline has. Hints are guesses, so check them against the design.",
   }));
 
-  // Motion that is new altogether is already a finding.
-  const added = new Set(moves.map((move) => move.key));
+  // Motion that is new altogether is already a finding, so say it there, once.
+  const added = new Map(moves.map((move, i) => [move.key, drift[i]]));
   for (const { key, found, selector, still } of newMoves(baseline.reducedMotion, m.reduced)) {
-    if (still || added.has(key)) continue;
+    if (still) continue;
+    const finding = added.get(key);
+    if (finding) {
+      finding.found += ", and it moves even when the user asks for reduced motion";
+      finding.fix += " Turn it off in @media (prefers-reduced-motion: reduce).";
+      continue;
+    }
     drift.push({
       cause: "reduced motion",
       found: `Now moves even when the user asks for reduced motion: ${found}`,
